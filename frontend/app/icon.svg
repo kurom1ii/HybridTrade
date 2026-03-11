@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="HybridTrade">
+  <rect width="64" height="64" rx="14" fill="url(#g)" />
+  <path d="M16 48L25.6 16" stroke="#000" stroke-width="7" stroke-linecap="round" />
+  <path d="M38.4 48L48 16" stroke="#000" stroke-width="7" stroke-linecap="round" />
+  <path d="M21 32H43" stroke="#000" stroke-width="7" stroke-linecap="round" />
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00B4D8" />
+      <stop offset="1" stop-color="#0090b0" />
+    </linearGradient>
+  </defs>
+</svg>

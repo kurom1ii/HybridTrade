@@ -1,0 +1,14 @@
+[[schedules]]
+name = "heartbeat-sweep"
+cron_expr = "0 * * * * *"
+job_type = "heartbeat_sweep"
+enabled = true
+payload = {}
+
+[[schedules]]
+name = "memory-compaction"
+cron_expr = "0 */10 * * * *"
+job_type = "memory_compaction"
+enabled = true
+payload = {}
+

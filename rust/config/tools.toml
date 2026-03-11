@@ -1,0 +1,55 @@
+[[tools]]
+name = "fetch_page"
+kind = "native"
+enabled = true
+allowed_agents = ["source_scout"]
+timeout_ms = 15000
+
+[[tools]]
+name = "extract_signals"
+kind = "native"
+enabled = true
+allowed_agents = ["technical_analyst"]
+timeout_ms = 5000
+
+[[tools]]
+name = "memory_lookup"
+kind = "native"
+enabled = true
+allowed_agents = ["coordinator", "report_synthesizer"]
+timeout_ms = 3000
+
+[[tools]]
+name = "summarize_sources"
+kind = "native"
+enabled = true
+allowed_agents = ["report_synthesizer"]
+timeout_ms = 3000
+
+[[tools]]
+name = "read"
+kind = "native"
+enabled = true
+allowed_agents = []
+timeout_ms = 5000
+
+[[tools]]
+name = "write"
+kind = "native"
+enabled = true
+allowed_agents = []
+timeout_ms = 5000
+
+[[tools]]
+name = "exec"
+kind = "native"
+enabled = true
+allowed_agents = []
+timeout_ms = 15000
+
+[[tools]]
+name = "bash"
+kind = "native"
+enabled = true
+allowed_agents = []
+timeout_ms = 15000

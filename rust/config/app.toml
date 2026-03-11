@@ -1,0 +1,44 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+frontend_origin = "http://127.0.0.1:3000"
+
+[database]
+path = "./data/hybridtrade.db"
+
+[heartbeat]
+api_interval_seconds = 10
+api_ttl_seconds = 30
+scheduler_interval_seconds = 5
+scheduler_ttl_seconds = 20
+agent_ttl_seconds = 120
+
+[orchestration]
+default_source_scope = "public_web"
+default_priority = "normal"
+default_goal = "Thu thập thông tin và tổng hợp phân tích kỹ thuật từ các nguồn public web."
+default_sections = [
+  "Nguồn và phạm vi",
+  "Tín hiệu kỹ thuật",
+  "Mâu thuẫn và rủi ro",
+  "Tổng hợp cuối"
+]
+max_parallel_sources = 4
+seed_urls = []
+
+[providers.default]
+chat = "openai"
+
+[providers.openai]
+enabled = true
+base_url = "http://localhost:4141"
+model = "gpt-5.4"
+max_tokens = 400000
+temperature = 0.2
+
+[providers.anthropic]
+enabled = true
+base_url = "http://localhost:4141"
+model = "claude-opus-4.6"
+max_tokens = 128000
+temperature = 0.2

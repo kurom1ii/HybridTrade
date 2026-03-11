@@ -1,0 +1,3 @@
+[workspace]
+members = ["server", "agent-cli", "proxy-tester"]
+resolver = "2"

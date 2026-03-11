@@ -1,0 +1,9 @@
+skill_tools = ["chrome-devtools", "dom-inspection", "network-inspection", "console-inspection"]
+
+[[mcp_servers]]
+name = "chrome-devtools"
+enabled = true
+allowed_agents = []
+timeout_ms = 120000
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
