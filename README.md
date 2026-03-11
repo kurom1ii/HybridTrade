@@ -1,89 +1,191 @@
-# HybridTrade Intelligence Dashboard
+<div align="center">
 
-HybridTrade hiện dùng một backend Rust đã được viết lại theo hướng gọn: phục vụ investigation workflow, heartbeat, schedules và SSE cho phần frontend intelligence đang chạy thật.
+# HYBRID TRADE
 
-## Tổng quan
+**AI-Powered Multi-Agent Trading Intelligence Platform**
 
-- `rust/`: backend Rust dạng monolith, dùng `Axum + Tokio + SQLx + SQLite + SSE`.
-- `rust/agent-cli/`: CLI Rust tách riêng để chat với backend agents qua HTTP debug API.
-- `frontend/`: frontend Next.js dạng hybrid, gồm một phần intelligence UI đã nối backend và một phần trading UI còn là mock tĩnh.
-- `docs/`: bộ tài liệu tiếng Việt cho backend, frontend và độ lệch giữa hai phía.
+A real-time trading dashboard that leverages autonomous AI agents to analyze forex, commodities, indices, and crypto markets — delivering actionable signals with transparent reasoning.
 
-## Tính năng v1
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://react.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss)](https://tailwindcss.com/)
+[![Rust](https://img.shields.io/badge/Rust-Backend-DEA584?logo=rust)](https://www.rust-lang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 
-- Tạo `investigation` mới với topic, goal và danh sách URL công khai.
-- Chạy pipeline agent gọn gồm `Coordinator`, `Source Scout`, `Technical Analyst`, `Evidence Verifier`, `Report Synthesizer`.
-- Sinh `sources`, `findings`, `transcript`, `final_report` và đẩy cập nhật lên frontend theo thời gian thực.
-- Lưu `investigations`, `sections`, `messages`, `findings`, `sources`, `heartbeats`, `schedules` trong SQLite.
-- Stream sự kiện lên frontend qua `SSE`.
-- Hỗ trợ `cron jobs`, `heartbeat sweep`, `history compaction` và `follow-up question`.
+</div>
 
-## Lưu ý phạm vi
+---
 
-Hệ thống này không dùng để đặt lệnh trade. Trong v1:
+## Preview
 
-- Không có broker integration.
-- Không có order execution.
-- Không có risk engine để giao dịch thật.
-- Chỉ làm việc với nguồn `public web`.
+### Landing Page
 
-## Chạy nhanh
+![Landing Page](screenshots/landing-hero.png)
 
-Backend:
+### Trading Dashboard
+
+![Dashboard](screenshots/dashboard-main.png)
+
+### Markets Overview
+
+![Markets](screenshots/dashboard-markets.png)
+
+### AI Trading Signals
+
+![Signals](screenshots/dashboard-signals.png)
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                  FRONTEND                       │
+│         Next.js 16 + React 19 + Tailwind 4      │
+│                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │ Landing  │  │Dashboard │  │ Investigation│  │
+│  │  Page    │  │  Suite   │  │   Workflow   │  │
+│  └──────────┘  └──────────┘  └──────────────┘  │
+│         │            │              │           │
+│         └────────────┼──────────────┘           │
+│                      │ SSE / REST               │
+├──────────────────────┼──────────────────────────┤
+│                  BACKEND                        │
+│            Rust · Axum · Tokio                  │
+│                                                 │
+│  ┌────────────────────────────────────────────┐ │
+│  │           AGENT PIPELINE                   │ │
+│  │                                            │ │
+│  │  Coordinator ──► Source Scout               │ │
+│  │       │                │                   │ │
+│  │       ▼                ▼                   │ │
+│  │  Technical     Evidence Verifier           │ │
+│  │  Analyst              │                   │ │
+│  │       │               │                   │ │
+│  │       └───────┬───────┘                   │ │
+│  │               ▼                            │ │
+│  │       Report Synthesizer                   │ │
+│  └────────────────────────────────────────────┘ │
+│                                                 │
+│  SQLite · Heartbeats · Scheduler · MCP Tools    │
+└─────────────────────────────────────────────────┘
+```
+
+## Features
+
+### Trading Dashboard
+- **Multi-asset coverage** — Forex, commodities, indices, and crypto in a unified view
+- **AI analysis cards** — Each instrument shows AI-generated technical analysis with confidence scores
+- **Key levels** — Support/resistance levels highlighted per instrument
+- **Session timers** — Live clocks for Sydney, Tokyo, London, and New York sessions
+- **Signal filtering** — Filter by asset class, signal strength, and direction (BUY/SELL)
+
+### AI Agent System
+- **Coordinator** — Orchestrates investigation workflow and delegates tasks
+- **Source Scout** — Discovers and validates information sources from the public web
+- **Technical Analyst** — Performs technical analysis with chart pattern recognition
+- **Evidence Verifier** — Cross-references findings for accuracy and consistency
+- **Report Synthesizer** — Compiles agent outputs into actionable intelligence reports
+
+### Dashboard Pages
+| Page | Description |
+|------|-------------|
+| **Dashboard** | Main trading view with AI-analyzed instrument cards |
+| **Markets** | Live prices, volume, spreads across 15 instruments |
+| **Positions** | Open position tracking with P/L monitoring |
+| **Signals** | AI-generated BUY/SELL signals with entry/SL/TP levels |
+| **Agents** | Agent health monitoring and investigation queue |
+| **Analytics** | Per-symbol deep analysis with historical data |
+| **News** | Aggregated market news feed |
+| **Orders** | Order management and execution history |
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Framework** | Next.js 16 (App Router, Turbopack) |
+| **UI** | React 19, Tailwind CSS 4, Motion (Framer Motion) |
+| **Charts** | Recharts |
+| **Icons** | Lucide, HugeIcons |
+| **Theming** | next-themes (dark/light) |
+| **Backend** | Rust, Axum, Tokio, SQLx |
+| **Database** | SQLite |
+| **Streaming** | Server-Sent Events (SSE) |
+| **Language** | TypeScript 5.9, Rust |
+
+## Getting Started
+
+### Prerequisites
+- Node.js 20+
+- Rust toolchain (for backend)
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to see the landing page, or navigate to [/dashboard](http://localhost:3000/dashboard) for the trading interface.
+
+### Backend (optional)
 
 ```bash
 cd rust
-export OPENAI_API_KEY=your_openai_key
-export ANTHROPIC_API_KEY=your_anthropic_key
+export OPENAI_API_KEY=your_key
+export ANTHROPIC_API_KEY=your_key
 cargo run -p hybridtrade-server
 ```
 
-CLI debug agent:
+The backend enables the investigation workflow and AI agent pipeline. The frontend trading dashboard works independently with mock data.
 
-```bash
-cd rust
-cargo run -p hybridtrade-agent-cli -- providers
-cargo run -p hybridtrade-agent-cli -- agents
-cargo run -p hybridtrade-agent-cli -- chat --agent technical_analyst
+## Project Structure
+
+```
+HybridTrade/
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx                 # Landing page
+│   │   ├── globals.css              # Theme tokens + Tailwind
+│   │   └── dashboard/
+│   │       ├── page.tsx             # Main trading dashboard
+│   │       ├── markets/             # Live market prices
+│   │       ├── positions/           # Position tracking
+│   │       ├── signals/             # AI trading signals
+│   │       ├── agents/              # Agent monitoring
+│   │       ├── analytics/           # Deep analysis
+│   │       ├── news/                # News feed
+│   │       └── orders/              # Order management
+│   ├── components/
+│   │   ├── dashboard/               # Sidebar, top-bar, stats, cards
+│   │   ├── landing/                 # Hero, philosophy, markets, CTA
+│   │   └── ui/                      # Shared UI primitives
+│   └── lib/                         # Utils, types, API clients
+├── rust/
+│   ├── server/                      # Axum backend + agent pipeline
+│   ├── agent-cli/                   # Debug CLI for agents
+│   └── config/                      # App, MCP, scheduler configs
+├── docs/                            # Vietnamese documentation
+└── screenshots/                     # UI screenshots
 ```
 
-Frontend:
+## Design
 
-```bash
-cd frontend
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080 npm run dev
-```
+The interface follows a **true-black dark theme** with cyan (#22D3EE) as the primary accent — designed for extended screen time during trading sessions.
 
-Sau khi backend và frontend cùng chạy, nên mở trực tiếp màn đã nối backend thật:
+- **Typography**: Roboto Condensed — compact, readable at small sizes
+- **Color system**: Cyan accent, green for profit, red for loss, amber for warnings
+- **Animations**: Motion (Framer Motion) for page transitions, stagger grids, and micro-interactions
+- **Layout**: Collapsible sidebar + session-aware top bar with global search (Ctrl+K)
 
-```text
-http://127.0.0.1:3000/dashboard/investigations
-```
+## License
 
-`/dashboard` hiện vẫn là màn trading mock tĩnh.
+This project is for educational and research purposes.
 
-## Kiểm tra
+---
 
-Backend:
-
-```bash
-cd rust
-cargo test -p hybridtrade-server
-cargo check -p hybridtrade-server
-cargo build -p hybridtrade-server
-cargo build -p hybridtrade-agent-cli
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm run build
-```
-
-## Tài liệu
-
-- [Backend Rust](./docs/backend-rust.md)
-- [Agent CLI](./docs/agent-cli.md)
-- [Frontend Next.js](./docs/frontend-nextjs.md)
-- [Đồng bộ backend và frontend](./docs/dong-bo-backend-frontend.md)
+<div align="center">
+  <sub>Built with Next.js, Rust, and AI agents</sub>
+</div>
