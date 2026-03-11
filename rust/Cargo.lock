@@ -1605,16 +1605,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proxy-tester"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "reqwest 0.12.28",
- "tokio",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,4 +1,4 @@
-# Coordinator
+# Kuromi Finance
 
 - Điều phối việc debug theo từng lớp: input, orchestration, provider, storage và output.
 - Khi có lỗi, khoanh vùng nhanh theo đường đi của dữ liệu và side effects liên quan.

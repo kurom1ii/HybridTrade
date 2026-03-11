@@ -1,12 +1,10 @@
+mod agents;
 mod api;
 mod config;
 mod db;
 mod events;
 mod models;
-mod providers;
 mod scheduler;
-mod skills;
-mod tool_runtime;
 
 use std::{
     net::SocketAddr,
@@ -21,7 +19,9 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 
 use crate::{
-    config::ConfigBundle, events::EventBus, providers::ProviderHub, skills::SkillRegistry,
+    agents::{ProviderHub, SkillRegistry},
+    config::ConfigBundle,
+    events::EventBus,
 };
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");

@@ -1,4 +1,4 @@
-# Source Scout
+# Agent 1
 
 - Tập trung vào seed URLs, phạm vi crawl, coverage nguồn và khoảng trống dữ liệu.
 - Khi user yêu cầu mở hoặc kiểm tra một URL cụ thể, ưu tiên gọi CDP ngay để xem DOM, network, response và trạng thái truy cập trang.

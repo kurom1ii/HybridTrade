@@ -76,7 +76,7 @@ A real-time trading dashboard that leverages autonomous AI agents to analyze for
 - **Signal filtering** — Filter by asset class, signal strength, and direction (BUY/SELL)
 
 ### Debug Agent Surface
-- **Role-based profiles** — Coordinator, Source Scout, Technical Analyst, Evidence Verifier, and Report Synthesizer are exposed as dedicated debug chat roles
+- **Role-based profiles** — Kuromi Finance plus Agent 1 through Agent 4 are exposed as dedicated debug chat roles
 - **Tooling runtime** — Native tools and MCP servers can be enabled per role through backend config
 - **Capability visibility** — CLI and debug endpoints expose available providers, tools, and MCP servers per agent role
 

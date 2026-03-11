@@ -113,7 +113,7 @@ export function buildSubagentTasks(
 
   return [
     {
-      role: "Coordinator",
+      role: "Kuromi Finance",
       status: detail
         ? detail.investigation.status === "completed"
           ? "completed"
@@ -131,7 +131,7 @@ export function buildSubagentTasks(
         `Chia task cho cac agent con de tong hop narrative ky thuat cua ${insight.pair.symbol}.`,
     },
     {
-      role: "Source Scout",
+      role: "Agent 1",
       status: detail
         ? detail.sources.length > 0
           ? "completed"
@@ -147,7 +147,7 @@ export function buildSubagentTasks(
         `Nguon goi y: ${recommendedSourceUrls(insight.pair.symbol).join(" | ")}`,
     },
     {
-      role: "Technical Analyst",
+      role: "Agent 2",
       status: detail
         ? detail.findings.length > 0 || sectionStatus("technical_signals") === "concluded"
           ? "completed"
@@ -165,7 +165,7 @@ export function buildSubagentTasks(
         insight.summary,
     },
     {
-      role: "Evidence Verifier",
+      role: "Agent 3",
       status: detail
         ? sectionStatus("contradictions") === "concluded"
           ? "completed"
@@ -181,7 +181,7 @@ export function buildSubagentTasks(
         "Kiem tra xem narrative bullish/bearish co xung dot hay khong.",
     },
     {
-      role: "Report Synthesizer",
+      role: "Agent 4",
       status: detail
         ? detail.investigation.final_report
           ? "completed"

@@ -34,14 +34,26 @@ export function truncate(value: string, maxLength = 120): string {
 }
 
 export function titleFromRole(role: string): string {
-  return role
-    .split("_")
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
+  const normalized = role.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    coordinator: "Kuromi Finance",
+    source_scout: "Agent 1",
+    technical_analyst: "Agent 2",
+    evidence_verifier: "Agent 3",
+    report_synthesizer: "Agent 4",
+    user: "User",
+  };
+
+  return (
+    labels[normalized] ||
+    role
+      .split("_")
+      .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+      .join(" ")
+  );
 }
 
 export function formatConfidence(confidence: number | null): string {
   if (confidence == null) return "--";
   return `${Math.round(confidence * 100)}%`;
 }
-

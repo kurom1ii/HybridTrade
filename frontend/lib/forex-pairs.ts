@@ -42,7 +42,7 @@ export const FOREX_PAIRS: ForexPair[] = [
   { symbol: "EUR/NZD", base: "EUR", quote: "NZD", category: "Euro Crosses", session: "Asia / London", volatility: "High", note: "Volatility cao, spread lon hon nhom majors." },
   { symbol: "EUR/JPY", base: "EUR", quote: "JPY", category: "Yen Crosses", session: "Asia / London", volatility: "Fast", note: "Ket hop giua risk sentiment va du lieu chau Au." },
   { symbol: "GBP/JPY", base: "GBP", quote: "JPY", category: "Yen Crosses", session: "Asia / London", volatility: "High", note: "Mot trong nhung cap bien dong manh nhat." },
-  { symbol: "AUD/JPY", base: "AUD", quote: "JPY", category: "Yen Crosses", session: "Asia", volatility: "Fast", note: "Proxy cho risk-on / risk-off o chau A." },
+  { symbol: "AUD/JPY", base: "AUD", quote: "JPY", category: "Yen Crosses", session: "Asia", volatility: "Fast", note: "Thuoc do risk-on / risk-off o chau A." },
   { symbol: "NZD/JPY", base: "NZD", quote: "JPY", category: "Yen Crosses", session: "Asia", volatility: "Fast", note: "De theo doi carry trade sentiment." },
   { symbol: "CAD/JPY", base: "CAD", quote: "JPY", category: "Yen Crosses", session: "Asia / New York", volatility: "Fast", note: "Ket hop risk sentiment va gia dau." },
   { symbol: "CHF/JPY", base: "CHF", quote: "JPY", category: "Yen Crosses", session: "Asia / Europe", volatility: "Balanced", note: "Cross safe haven, hay dung de do do risk-off." },
@@ -82,4 +82,3 @@ export function recommendedSourceUrls(symbol: string): string[] {
     `https://www.tradingview.com/symbols/${compact.toUpperCase()}/ideas/`,
   ];
 }
-

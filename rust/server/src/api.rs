@@ -15,10 +15,11 @@ use serde_json::json;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    db,
-    models::{AgentRole, DebugAgentView},
-    providers::{AgentChatOptions, AgentPromptContext},
-    AppState,
+    agents::{
+        AgentChatOptions, AgentPromptContext, AgentRole, DebugAgentChatRequest,
+        DebugAgentChatResponse, DebugAgentView, ProviderStatusView,
+    },
+    db, AppState,
 };
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -159,7 +160,7 @@ async fn update_schedule(
 
 async fn debug_providers(
     State(state): State<Arc<AppState>>,
-) -> AppResult<Json<Vec<crate::models::ProviderStatusView>>> {
+) -> AppResult<Json<Vec<ProviderStatusView>>> {
     Ok(Json(state.providers.provider_statuses()))
 }
 
@@ -199,8 +200,8 @@ async fn debug_agents(State(state): State<Arc<AppState>>) -> AppResult<Json<Vec<
 async fn debug_agent_chat(
     State(state): State<Arc<AppState>>,
     Path(role): Path<String>,
-    Json(request): Json<crate::models::DebugAgentChatRequest>,
-) -> AppResult<Json<crate::models::DebugAgentChatResponse>> {
+    Json(request): Json<DebugAgentChatRequest>,
+) -> AppResult<Json<DebugAgentChatResponse>> {
     if request.message.trim().is_empty() {
         return Err(AppError::bad_request("message là bắt buộc"));
     }

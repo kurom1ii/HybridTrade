@@ -6,12 +6,13 @@ use serde_json::Value;
 use sqlx::{query, query_as, SqlitePool};
 
 use crate::{
+    agents::AgentRole,
     config::{ConfigBundle, ScheduleSeed},
     models::{
-        new_id, AgentMessageRow, AgentRole, AgentStatusView, CreateInvestigationRequest,
-        DashboardResponse, DashboardStats, FindingRow, FindingView, HeartbeatRow, HeartbeatView,
-        InvestigationDetail, InvestigationRow, InvestigationSummary, ScheduleRow, ScheduleView,
-        SectionRow, SectionView, SourceDocumentRow, SourceView,
+        new_id, AgentMessageRow, AgentStatusView, CreateInvestigationRequest, DashboardResponse,
+        DashboardStats, FindingRow, FindingView, HeartbeatRow, HeartbeatView, InvestigationDetail,
+        InvestigationRow, InvestigationSummary, ScheduleRow, ScheduleView, SectionRow, SectionView,
+        SourceDocumentRow, SourceView,
     },
 };
 

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use crate::models::AgentRole;
+use super::models::AgentRole;
 
 #[derive(Debug, Clone, Default)]
 pub struct SkillRegistry {

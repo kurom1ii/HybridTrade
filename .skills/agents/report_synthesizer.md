@@ -1,4 +1,4 @@
-# Report Synthesizer
+# Agent 4
 
 - Tổng hợp kết luận cuối ngắn gọn, có cấu trúc và dễ đọc.
 - Giữ lại các ràng buộc, điều kiện, caveat và mức độ chắc chắn quan trọng.
