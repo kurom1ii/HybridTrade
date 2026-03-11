@@ -30,6 +30,7 @@ use super::{
     },
     prompt::{build_system_prompt, resolve_system_prompt_log_path},
     protocols::call_provider,
+    team::TeamOrchestrator,
 };
 
 const CHAT_SESSION_TTL: Duration = Duration::from_secs(30 * 60);
@@ -204,7 +205,6 @@ impl ProviderHub {
                 )
                 .await;
             let mut tool_runtime = runtime.lock().await;
-            tool_runtime.prepare_turn(&normalized_history, context_preview.clone());
 
             return self
                 .run_chat_with_runtime(
@@ -228,7 +228,6 @@ impl ProviderHub {
         let mut tool_runtime = self
             .capabilities
             .tool_runtime_for(
-                agent_role,
                 &normalized_history,
                 context_preview.clone(),
                 self.client.clone(),
@@ -359,7 +358,7 @@ impl ProviderHub {
 
         let runtime = Arc::new(Mutex::new(
             self.capabilities
-                .tool_runtime_for(agent_role, history, context_preview, self.client.clone())
+                .tool_runtime_for(history, context_preview, self.client.clone())
                 .await,
         ));
 
@@ -390,6 +389,9 @@ impl ProviderHub {
         temperature: Option<f32>,
         tool_runtime: &mut ToolRuntime,
     ) -> Result<DebugAgentChatResponse> {
+        tool_runtime.prepare_turn(history, context_preview.clone());
+        tool_runtime.attach_team_orchestrator(self.team_orchestrator(provider, config, api_key));
+
         let prompt_profile = self.capabilities.prompt_profile_for(agent_role);
         let system_prompt = build_system_prompt(agent_role, context, &prompt_profile);
         let mut compacted = compact_history_for_provider(
@@ -519,6 +521,21 @@ impl ProviderHub {
             ProviderKind::OpenAi => &self.config.openai,
             ProviderKind::Anthropic => &self.config.anthropic,
         }
+    }
+
+    fn team_orchestrator(
+        &self,
+        provider: ProviderKind,
+        config: &ProviderConfig,
+        api_key: Option<&str>,
+    ) -> TeamOrchestrator {
+        TeamOrchestrator::new(
+            self.client.clone(),
+            self.capabilities.clone(),
+            provider,
+            config.clone(),
+            api_key.map(str::to_string),
+        )
     }
 }
 

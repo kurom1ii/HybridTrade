@@ -7,6 +7,7 @@ use std::{
 use reqwest::Client;
 use serde_json::{json, Value};
 
+use crate::agents::providers::team::TeamOrchestrator;
 use crate::config::{McpServerConfig, NativeToolConfig};
 
 use super::super::models::{ChatTurn, DebugToolCall};
@@ -28,6 +29,7 @@ pub(crate) struct ToolRuntime {
     pub(super) mcp_sessions: HashMap<String, McpSession>,
     pub(super) initialization_warnings: Vec<String>,
     pub(super) tool_calls: Vec<DebugToolCall>,
+    pub(super) team_orchestrator: Option<TeamOrchestrator>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,7 @@ impl ToolRuntime {
             mcp_sessions: HashMap::new(),
             initialization_warnings: Vec::new(),
             tool_calls: Vec::new(),
+            team_orchestrator: None,
         };
 
         if let Some(warning) = workspace_warning {
@@ -120,6 +123,11 @@ impl ToolRuntime {
         self.history = history.to_vec();
         self.context_preview = context_preview;
         self.tool_calls.clear();
+        self.team_orchestrator = None;
+    }
+
+    pub(crate) fn attach_team_orchestrator(&mut self, team_orchestrator: TeamOrchestrator) {
+        self.team_orchestrator = Some(team_orchestrator);
     }
 
     pub(crate) async fn execute(&mut self, name: &str, arguments: Value) -> String {
@@ -192,6 +200,10 @@ impl ToolRuntime {
         self.tools.insert(definition.name.clone(), definition);
     }
 
+    pub(crate) fn remove_definition(&mut self, name: &str) {
+        self.tools.remove(name);
+    }
+
     async fn execute_inner(
         &mut self,
         executor: &ToolExecutor,
@@ -245,6 +257,7 @@ mod tests {
             mcp_sessions: HashMap::new(),
             initialization_warnings: Vec::new(),
             tool_calls: Vec::new(),
+            team_orchestrator: None,
         }
     }
 

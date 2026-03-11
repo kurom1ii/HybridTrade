@@ -5,45 +5,39 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
-    Coordinator,
-    SourceScout,
-    TechnicalAnalyst,
-    EvidenceVerifier,
-    ReportSynthesizer,
+    Kuromi,
     User,
 }
 
 impl AgentRole {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Coordinator => "coordinator",
-            Self::SourceScout => "source_scout",
-            Self::TechnicalAnalyst => "technical_analyst",
-            Self::EvidenceVerifier => "evidence_verifier",
-            Self::ReportSynthesizer => "report_synthesizer",
+            Self::Kuromi => "kuromi",
             Self::User => "user",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Coordinator => "Kuromi Finance",
-            Self::SourceScout => "Agent 1",
-            Self::TechnicalAnalyst => "Agent 2",
-            Self::EvidenceVerifier => "Agent 3",
-            Self::ReportSynthesizer => "Agent 4",
+            Self::Kuromi => "Kuromi Finance",
             Self::User => "User",
         }
     }
 
-    pub fn team() -> &'static [Self] {
-        &[
-            Self::Coordinator,
-            Self::SourceScout,
-            Self::TechnicalAnalyst,
-            Self::EvidenceVerifier,
-            Self::ReportSynthesizer,
-        ]
+    pub fn visible_agents() -> &'static [Self] {
+        &[Self::Kuromi]
+    }
+
+    pub fn matches_stored_role(self, value: &str) -> bool {
+        let normalized = value.trim().to_ascii_lowercase();
+
+        match self {
+            Self::Kuromi => matches!(
+                normalized.as_str(),
+                "kuromi" | "kuromi_finance" | "kuromi-finance" | "coordinator"
+            ),
+            Self::User => normalized == "user",
+        }
     }
 }
 
@@ -52,11 +46,7 @@ impl FromStr for AgentRole {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "coordinator" => Ok(Self::Coordinator),
-            "source_scout" => Ok(Self::SourceScout),
-            "technical_analyst" => Ok(Self::TechnicalAnalyst),
-            "evidence_verifier" => Ok(Self::EvidenceVerifier),
-            "report_synthesizer" => Ok(Self::ReportSynthesizer),
+            "kuromi" | "kuromi_finance" | "kuromi-finance" | "coordinator" => Ok(Self::Kuromi),
             "user" => Ok(Self::User),
             other => Err(format!("vai trò agent không hợp lệ: {other}")),
         }
@@ -164,4 +154,30 @@ pub struct DebugAgentChatResponse {
     pub investigation_id: Option<String>,
     pub chat_session_id: Option<String>,
     pub debug: DebugAgentChatDebug,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRole;
+    use std::str::FromStr;
+
+    #[test]
+    fn parses_kuromi_aliases() {
+        assert_eq!(AgentRole::from_str("kuromi").unwrap(), AgentRole::Kuromi);
+        assert_eq!(
+            AgentRole::from_str("kuromi_finance").unwrap(),
+            AgentRole::Kuromi
+        );
+        assert_eq!(
+            AgentRole::from_str("coordinator").unwrap(),
+            AgentRole::Kuromi
+        );
+    }
+
+    #[test]
+    fn matches_legacy_stored_role_names() {
+        assert!(AgentRole::Kuromi.matches_stored_role("kuromi"));
+        assert!(AgentRole::Kuromi.matches_stored_role("coordinator"));
+        assert!(!AgentRole::Kuromi.matches_stored_role("source_scout"));
+    }
 }

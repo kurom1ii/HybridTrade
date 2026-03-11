@@ -16,7 +16,7 @@ pub struct SkillRegistry {
 
 #[derive(Debug, Clone)]
 struct SkillDoc {
-    title: String,
+    file_name: String,
     body: String,
 }
 
@@ -31,7 +31,7 @@ impl SkillRegistry {
 
         let agents_dir = base_dir.join("agents");
         if agents_dir.exists() {
-            for role in AgentRole::team() {
+            for role in AgentRole::visible_agents() {
                 let docs = load_agent_docs(&agents_dir, role.as_str())?;
                 if !docs.is_empty() {
                     per_agent.insert(role.as_str().to_string(), docs);
@@ -42,18 +42,21 @@ impl SkillRegistry {
         Ok(Self { common, per_agent })
     }
 
-    pub fn common_titles(&self) -> Vec<String> {
-        self.common.iter().map(|item| item.title.clone()).collect()
+    pub fn common_filenames(&self) -> Vec<String> {
+        self.common
+            .iter()
+            .map(|item| item.file_name.clone())
+            .collect()
     }
 
     pub fn common_markdown(&self) -> String {
         render_docs(&self.common)
     }
 
-    pub fn agent_titles(&self, role: AgentRole) -> Vec<String> {
+    pub fn agent_filenames(&self, role: AgentRole) -> Vec<String> {
         self.per_agent
             .get(role.as_str())
-            .map(|items| items.iter().map(|item| item.title.clone()).collect())
+            .map(|items| items.iter().map(|item| item.file_name.clone()).collect())
             .unwrap_or_default()
     }
 
@@ -68,14 +71,21 @@ impl SkillRegistry {
 fn load_agent_docs(agents_dir: &Path, role: &str) -> Result<Vec<SkillDoc>> {
     let mut docs = Vec::new();
 
-    let single_file = agents_dir.join(format!("{role}.md"));
-    if single_file.exists() {
-        docs.push(load_markdown_file(&single_file)?);
-    }
+    let role_keys = match role {
+        "kuromi" => vec!["kuromi", "coordinator"],
+        other => vec![other],
+    };
 
-    let role_dir = agents_dir.join(role);
-    if role_dir.exists() {
-        docs.extend(load_markdown_files(&role_dir)?);
+    for key in role_keys {
+        let single_file = agents_dir.join(format!("{key}.md"));
+        if single_file.exists() {
+            docs.push(load_markdown_file(&single_file)?);
+        }
+
+        let role_dir = agents_dir.join(key);
+        if role_dir.exists() {
+            docs.extend(load_markdown_files(&role_dir)?);
+        }
     }
 
     Ok(docs)
@@ -104,21 +114,13 @@ fn load_markdown_files(dir: &Path) -> Result<Vec<SkillDoc>> {
 fn load_markdown_file(path: &Path) -> Result<SkillDoc> {
     let body = fs::read_to_string(path)
         .with_context(|| format!("không thể đọc file skill {}", path.display()))?;
-    let title = extract_title(&body).unwrap_or_else(|| {
-        path.file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("untitled-skill")
-            .to_string()
-    });
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("untitled-skill.md")
+        .to_string();
 
-    Ok(SkillDoc { title, body })
-}
-
-fn extract_title(body: &str) -> Option<String> {
-    body.lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("# "))
-        .map(|line| line.trim_start_matches("# ").trim().to_string())
+    Ok(SkillDoc { file_name, body })
 }
 
 fn render_docs(docs: &[SkillDoc]) -> String {

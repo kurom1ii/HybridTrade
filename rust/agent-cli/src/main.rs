@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    collections::BTreeSet,
+    io::{self, Write},
+};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -40,8 +43,8 @@ enum Commands {
 
 #[derive(Debug, Clone, Args)]
 struct ChatArgs {
-    #[arg(long, short = 'a', help = "Tên agent, ví dụ technical_analyst")]
-    agent: String,
+    #[arg(long, short = 'a', help = "Tên agent, mặc định là kuromi")]
+    agent: Option<String>,
 
     #[arg(
         long,
@@ -288,56 +291,64 @@ async fn run_agents(backend: &BackendClient) -> Result<()> {
         return Ok(());
     }
 
+    let common_skills = agents
+        .iter()
+        .flat_map(|agent| agent.common_skills.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let mcp_servers = agents
+        .iter()
+        .flat_map(|agent| agent.mcp_servers.iter().map(|item| item.name.clone()))
+        .collect::<BTreeSet<_>>();
+    let native_tools = agents
+        .iter()
+        .flat_map(|agent| agent.native_tools.iter().map(|item| item.name.clone()))
+        .collect::<BTreeSet<_>>();
+
+    println!("Skills chung: {}", join_set(&common_skills));
+    println!("MCP chung: {}", join_set(&mcp_servers));
+    println!("Tools chung: {}", join_set(&native_tools));
+    println!();
+
     for agent in agents {
         let providers = if agent.providers.is_empty() {
             "không có".to_string()
         } else {
             agent.providers.join(", ")
         };
-        let mcp = if agent.mcp_servers.is_empty() {
+        let agent_skills = if agent.agent_skills.is_empty() {
             "không có".to_string()
         } else {
-            agent
-                .mcp_servers
-                .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            agent.agent_skills.join(", ")
         };
-        let tools = if agent.native_tools.is_empty() {
-            "không có".to_string()
-        } else {
-            agent
-                .native_tools
-                .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let common_skill_count = agent.common_skills.len();
-        let agent_skill_count = agent.agent_skills.len();
 
         println!(
-            "- {} ({}) | trạng thái: {} | provider mặc định: {} | khả dụng: {} | MCP chung: {} | tools: {} | skills chung/riêng: {}/{}",
-            agent.role,
-            agent.label,
-            agent.status,
-            agent.default_provider,
-            providers,
-            mcp,
-            tools,
-            common_skill_count,
-            agent_skill_count,
+            "- {} ({}) | trạng thái: {} | provider mặc định: {} | khả dụng: {}",
+            agent.role, agent.label, agent.status, agent.default_provider, providers,
         );
+        println!("  skills riêng: {}", agent_skills);
     }
 
     Ok(())
 }
 
+fn join_set(values: &BTreeSet<String>) -> String {
+    if values.is_empty() {
+        "không có".to_string()
+    } else {
+        values
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 async fn run_chat(backend: &BackendClient, args: ChatArgs) -> Result<()> {
+    let agent = selected_agent(&args);
+
     if let Some(message) = args.message.clone() {
         let request = build_chat_request(&args, message, Vec::new(), args.chat_session_id.clone());
-        let response = backend.chat(&args.agent, &request).await?;
+        let response = backend.chat(&agent, &request).await?;
         print_chat_response(&response, args.show_debug);
         return Ok(());
     }
@@ -346,9 +357,11 @@ async fn run_chat(backend: &BackendClient, args: ChatArgs) -> Result<()> {
 }
 
 async fn run_repl(backend: &BackendClient, args: ChatArgs) -> Result<()> {
+    let agent = selected_agent(&args);
+
     println!(
         "Đang chat với agent `{}` qua backend {}",
-        args.agent, backend.base_url
+        agent, backend.base_url
     );
     println!("Lệnh hỗ trợ: /exit, /quit, /clear, /debug");
 
@@ -400,7 +413,7 @@ async fn run_repl(backend: &BackendClient, args: ChatArgs) -> Result<()> {
             history.clone(),
             Some(chat_session_id.clone()),
         );
-        let response = backend.chat(&args.agent, &request).await?;
+        let response = backend.chat(&agent, &request).await?;
         println!();
         print_chat_response(&response, show_debug);
         println!();
@@ -416,6 +429,15 @@ async fn run_repl(backend: &BackendClient, args: ChatArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn selected_agent(args: &ChatArgs) -> String {
+    args.agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("kuromi")
+        .to_string()
 }
 
 fn build_chat_request(

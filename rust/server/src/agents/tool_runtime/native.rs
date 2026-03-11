@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use tokio::{fs, io::AsyncWriteExt, process::Command, time::timeout};
 
+use crate::agents::providers::team::{SpawnTeamRequest, TeamRuntimeContext};
 use crate::config::NativeToolConfig;
 
 use super::{
@@ -28,6 +29,7 @@ pub(super) enum NativeToolKind {
     Write,
     Exec,
     Bash,
+    SpawnTeam,
 }
 
 impl ToolRuntime {
@@ -70,6 +72,7 @@ impl ToolRuntime {
                 NativeToolKind::Write => self.write_path(arguments).await,
                 NativeToolKind::Exec => self.exec_command(arguments, tool_timeout).await,
                 NativeToolKind::Bash => self.run_bash(arguments, tool_timeout).await,
+                NativeToolKind::SpawnTeam => self.spawn_team(arguments).await,
             }
         })
         .await
@@ -413,6 +416,26 @@ impl ToolRuntime {
         }))
     }
 
+    async fn spawn_team(&self, arguments: Value) -> Result<Value> {
+        let request: SpawnTeamRequest =
+            serde_json::from_value(arguments).context("payload của spawn_team không hợp lệ")?;
+        let Some(team_orchestrator) = self.team_orchestrator.as_ref() else {
+            bail!("spawn_team chưa được gắn team orchestrator ở runtime hiện tại");
+        };
+
+        let output = team_orchestrator
+            .execute(
+                request,
+                TeamRuntimeContext {
+                    history: self.history.clone(),
+                    context_preview: self.context_preview.clone(),
+                },
+            )
+            .await?;
+
+        serde_json::to_value(output).context("không thể serialize kết quả spawn_team")
+    }
+
     fn resolve_workspace_path(&self, requested_path: &str) -> Result<PathBuf> {
         let candidate = PathBuf::from(requested_path);
         let candidate = if candidate.is_absolute() {
@@ -449,6 +472,7 @@ pub(super) fn native_tool_kind(name: &str) -> Option<NativeToolKind> {
         "write" => Some(NativeToolKind::Write),
         "exec" => Some(NativeToolKind::Exec),
         "bash" => Some(NativeToolKind::Bash),
+        "spawn_team" => Some(NativeToolKind::SpawnTeam),
         _ => None,
     }
 }
@@ -463,6 +487,7 @@ fn native_tool_name(kind: NativeToolKind) -> &'static str {
         NativeToolKind::Write => "write",
         NativeToolKind::Exec => "exec",
         NativeToolKind::Bash => "bash",
+        NativeToolKind::SpawnTeam => "spawn_team",
     }
 }
 
@@ -489,6 +514,9 @@ pub(super) fn native_tool_description(kind: NativeToolKind) -> &'static str {
         NativeToolKind::Exec => "Chạy một executable trực tiếp trong workspace mà không qua shell.",
         NativeToolKind::Bash => {
             "Chạy một lệnh bash ngắn trong workspace để debug hoặc thao tác nhanh."
+        }
+        NativeToolKind::SpawnTeam => {
+            "Spawn một team subagent runtime-only, cho họ trao đổi qua transcript chung rồi trả báo cáo về cho Kuromi."
         }
     }
 }
@@ -639,6 +667,54 @@ fn native_tool_schema(kind: NativeToolKind) -> Value {
                 }
             },
             "required": ["script"],
+            "additionalProperties": false,
+        }),
+        NativeToolKind::SpawnTeam => json!({
+            "type": "object",
+            "properties": {
+                "mission": {
+                    "type": "string",
+                    "description": "Mục tiêu chung mà team dynamic cần giải quyết"
+                },
+                "briefing": {
+                    "type": "string",
+                    "description": "Bổ sung ngắn từ Kuromi để các subagent bám vào"
+                },
+                "rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4,
+                    "description": "Số vòng thảo luận cho team, mặc định 2"
+                },
+                "report_instruction": {
+                    "type": "string",
+                    "description": "Định dạng hoặc yêu cầu riêng cho báo cáo cuối của team"
+                },
+                "members": {
+                    "type": "array",
+                    "description": "Danh sách subagent cần spawn cho mission này",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Tên hiển thị của subagent"
+                            },
+                            "responsibility": {
+                                "type": "string",
+                                "description": "Trọng trách hoặc góc phân tích chính của subagent"
+                            },
+                            "instructions": {
+                                "type": "string",
+                                "description": "Chỉ dẫn bổ sung riêng cho subagent này"
+                            }
+                        },
+                        "required": ["name", "responsibility"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["mission", "members"],
             "additionalProperties": false,
         }),
     }

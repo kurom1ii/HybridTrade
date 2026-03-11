@@ -111,8 +111,8 @@ export function Sidebar() {
               K
             </div>
             <div>
-              <div className="text-[13px] font-medium">Kuromi</div>
-              <div className="text-[11px] text-text-muted">Trader</div>
+              <div className="text-[13px] font-medium">Kuromi Finance</div>
+              <div className="text-[11px] text-text-muted">Primary Agent</div>
             </div>
           </div>
           {mounted && (

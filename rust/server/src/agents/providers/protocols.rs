@@ -1,8 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
+use tokio::time::sleep;
+use tracing::warn;
 
 use crate::config::ProviderConfig;
 
@@ -101,21 +103,7 @@ async fn call_openai(
             payload["tool_choice"] = json!("auto");
         }
 
-        let request = client
-            .post(format!(
-                "{}/responses",
-                config.base_url.trim_end_matches('/')
-            ))
-            .json(&payload);
-
-        let response = if let Some(api_key) = api_key {
-            request.bearer_auth(api_key)
-        } else {
-            request
-        }
-        .send()
-        .await
-        .context("gọi OpenAI Responses API thất bại")?;
+        let response = send_openai_request(client, config, api_key, &payload).await?;
 
         let payload = parse_provider_response(response, "openai").await?;
         let function_calls = extract_openai_function_calls(&payload);
@@ -183,13 +171,7 @@ async fn call_anthropic(
             payload["tool_choice"] = json!({ "type": "auto" });
         }
 
-        let response = send_anthropic_request(
-            client,
-            config.base_url.trim_end_matches('/'),
-            api_key,
-            &payload,
-        )
-        .await?;
+        let response = send_anthropic_request(client, config, api_key, &payload).await?;
 
         let payload = parse_provider_response(response, "anthropic").await?;
         let tool_uses = extract_anthropic_tool_uses(&payload);
@@ -389,35 +371,167 @@ fn extract_anthropic_tool_uses(payload: &Value) -> Vec<AnthropicToolUse> {
 
 async fn send_anthropic_request(
     client: &Client,
-    base_url: &str,
+    config: &ProviderConfig,
     api_key: Option<&str>,
     payload: &Value,
 ) -> Result<reqwest::Response> {
+    let base_url = config.base_url.trim_end_matches('/');
     let primary_url = if base_url.ends_with("/v1") {
         format!("{}/messages", base_url)
     } else {
         format!("{}/v1/messages", base_url)
     };
+    let fallback_base = base_url.trim_end_matches("/v1");
+    let fallback_url = (fallback_base != base_url
+        || primary_url != format!("{}/messages", fallback_base))
+    .then(|| format!("{}/messages", fallback_base));
 
-    let response = anthropic_request_builder(client, primary_url, api_key, payload)
-        .send()
-        .await
-        .context("gọi Anthropic thất bại")?;
+    send_provider_request_with_retry(
+        client,
+        "anthropic",
+        config,
+        api_key,
+        payload,
+        primary_url,
+        fallback_url,
+        anthropic_request_builder,
+    )
+    .await
+}
 
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        let fallback_base = base_url.trim_end_matches("/v1");
-        return anthropic_request_builder(
-            client,
-            format!("{}/messages", fallback_base),
-            api_key,
-            payload,
-        )
-        .send()
-        .await
-        .context("gọi Anthropic fallback /messages thất bại");
+async fn send_openai_request(
+    client: &Client,
+    config: &ProviderConfig,
+    api_key: Option<&str>,
+    payload: &Value,
+) -> Result<reqwest::Response> {
+    let base_url = config.base_url.trim_end_matches('/');
+    let primary_url = if base_url.ends_with("/v1") {
+        format!("{}/responses", base_url)
+    } else {
+        format!("{}/v1/responses", base_url)
+    };
+    let fallback_base = base_url.trim_end_matches("/v1");
+    let fallback_url = (fallback_base != base_url
+        || primary_url != format!("{}/responses", fallback_base))
+    .then(|| format!("{}/responses", fallback_base));
+
+    send_provider_request_with_retry(
+        client,
+        "openai",
+        config,
+        api_key,
+        payload,
+        primary_url,
+        fallback_url,
+        openai_request_builder,
+    )
+    .await
+}
+
+async fn send_provider_request_with_retry(
+    client: &Client,
+    provider: &str,
+    config: &ProviderConfig,
+    api_key: Option<&str>,
+    payload: &Value,
+    primary_url: String,
+    fallback_url: Option<String>,
+    build_request: ProviderRequestBuilder,
+) -> Result<reqwest::Response> {
+    let max_retries = config.request_retries;
+    let mut current_url = primary_url;
+    let mut current_path_label = "primary";
+    let mut used_fallback = false;
+    let mut attempt = 0usize;
+
+    loop {
+        let response = build_request(client, current_url.clone(), api_key, payload)
+            .send()
+            .await;
+
+        match response {
+            Ok(response) => {
+                let status = response.status();
+
+                if status == reqwest::StatusCode::NOT_FOUND {
+                    if let Some(fallback_url) = fallback_url.as_ref().filter(|_| !used_fallback) {
+                        used_fallback = true;
+                        current_url = fallback_url.clone();
+                        current_path_label = "fallback";
+                        attempt = 0;
+                        continue;
+                    }
+                }
+
+                if status.is_success() {
+                    return Ok(response);
+                }
+
+                let body = response.text().await.unwrap_or_default();
+                let body = body.trim();
+                let error_text = if body.is_empty() {
+                    format!("provider {provider} trả về {status}")
+                } else {
+                    format!("provider {provider} trả về {status}: {body}")
+                };
+
+                if should_retry_status(status) && attempt < max_retries {
+                    let delay = retry_delay(config, attempt);
+                    warn!(
+                        provider,
+                        status = %status,
+                        attempt = attempt + 1,
+                        max_retries,
+                        path = current_path_label,
+                        url = %current_url,
+                        delay_ms = delay.as_millis(),
+                        "provider request failed with retryable status, retrying"
+                    );
+                    sleep(delay).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                bail!(error_text);
+            }
+            Err(error) => {
+                if should_retry_transport_error(&error) && attempt < max_retries {
+                    let delay = retry_delay(config, attempt);
+                    warn!(
+                        provider,
+                        attempt = attempt + 1,
+                        max_retries,
+                        path = current_path_label,
+                        url = %current_url,
+                        delay_ms = delay.as_millis(),
+                        error = %error,
+                        "provider request transport error, retrying"
+                    );
+                    sleep(delay).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                return Err(error).with_context(|| format!("gọi {provider} thất bại"));
+            }
+        }
     }
+}
 
-    Ok(response)
+fn openai_request_builder<'a>(
+    client: &'a Client,
+    url: String,
+    api_key: Option<&'a str>,
+    payload: &'a Value,
+) -> reqwest::RequestBuilder {
+    let request = client.post(url).json(payload);
+
+    if let Some(api_key) = api_key {
+        request.bearer_auth(api_key)
+    } else {
+        request
+    }
 }
 
 fn anthropic_request_builder<'a>(
@@ -445,6 +559,23 @@ async fn parse_provider_response(response: reqwest::Response, provider: &str) ->
         bail!("provider {} trả về {}: {}", provider, status, text);
     }
     serde_json::from_str(&text).with_context(|| format!("phản hồi {provider} không hợp lệ"))
+}
+
+type ProviderRequestBuilder =
+    for<'a> fn(&'a Client, String, Option<&'a str>, &'a Value) -> reqwest::RequestBuilder;
+
+fn should_retry_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn should_retry_transport_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect()
+}
+
+fn retry_delay(config: &ProviderConfig, attempt: usize) -> Duration {
+    let base_ms = config.retry_backoff_ms.max(100);
+    let exponent = attempt.min(6) as u32;
+    Duration::from_millis(base_ms.saturating_mul(2_u64.saturating_pow(exponent)))
 }
 
 fn extract_openai_responses_content(payload: &Value) -> Option<String> {
@@ -504,5 +635,32 @@ fn extract_anthropic_content(payload: &Value) -> Option<String> {
         None
     } else {
         Some(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::ProviderConfig;
+
+    use super::{retry_delay, should_retry_status};
+
+    #[test]
+    fn retry_delay_grows_exponentially() {
+        let config = ProviderConfig {
+            retry_backoff_ms: 500,
+            ..ProviderConfig::default()
+        };
+
+        assert_eq!(retry_delay(&config, 0).as_millis(), 500);
+        assert_eq!(retry_delay(&config, 1).as_millis(), 1_000);
+        assert_eq!(retry_delay(&config, 2).as_millis(), 2_000);
+    }
+
+    #[test]
+    fn retries_only_for_transient_statuses() {
+        assert!(should_retry_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+        assert!(should_retry_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(!should_retry_status(reqwest::StatusCode::BAD_REQUEST));
+        assert!(!should_retry_status(reqwest::StatusCode::UNAUTHORIZED));
     }
 }

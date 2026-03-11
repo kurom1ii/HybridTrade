@@ -12,6 +12,7 @@ import {
   ForexPair,
   recommendedSourceUrls,
 } from "@/lib/forex-pairs";
+import { titleFromRole } from "@/lib/formatting";
 
 export type PairCoverageStatus = "covered" | "running" | "queued" | "uncovered";
 export type PairBias = "bullish" | "bearish" | "mixed" | "awaiting";
@@ -106,97 +107,73 @@ export function buildSubagentTasks(
 ): SubagentTask[] {
   const latestMessage = (role: string): MessageView | undefined =>
     detail?.transcript
-      .filter((message) => message.agent_role === role)
+      .filter((message) => normalizeRole(message.agent_role) === normalizeRole(role))
       .slice()
       .reverse()[0];
-  const sectionStatus = (slug: string) => detail?.sections.find((section) => section.slug === slug)?.status;
 
-  return [
+  const tasks: SubagentTask[] = [
     {
       role: "Kuromi Finance",
-      status: detail
-        ? detail.investigation.status === "completed"
-          ? "completed"
-          : detail.investigation.status === "running"
-            ? "running"
-            : "queued"
-        : insight.coverageStatus === "uncovered"
-          ? "awaiting"
-          : insight.coverageStatus === "covered"
-            ? "completed"
-            : "queued",
+      status: statusFromInvestigation(detail?.investigation.status, insight.coverageStatus),
       task: `Dieu phoi luong phan tich cho ${insight.pair.symbol}`,
       note:
+        latestMessage("kuromi")?.content ||
         latestMessage("coordinator")?.content ||
-        `Chia task cho cac agent con de tong hop narrative ky thuat cua ${insight.pair.symbol}.`,
-    },
-    {
-      role: "Agent 1",
-      status: detail
-        ? detail.sources.length > 0
-          ? "completed"
-          : detail.investigation.status === "running"
-            ? "running"
-            : "queued"
-        : insight.coverageStatus === "uncovered"
-          ? "awaiting"
-          : "queued",
-      task: "Quet nguon cong khai va market commentary theo cap tien",
-      note:
-        latestMessage("source_scout")?.content ||
-        `Nguon goi y: ${recommendedSourceUrls(insight.pair.symbol).join(" | ")}`,
-    },
-    {
-      role: "Agent 2",
-      status: detail
-        ? detail.findings.length > 0 || sectionStatus("technical_signals") === "concluded"
-          ? "completed"
-          : sectionStatus("technical_signals") === "in_progress"
-            ? "running"
-            : "queued"
-        : insight.coverageStatus === "covered"
-          ? "completed"
-          : insight.coverageStatus === "running"
-            ? "running"
-            : "awaiting",
-      task: "Rut ra bias, key levels, breakout va momentum signals",
-      note:
-        latestMessage("technical_analyst")?.content ||
-        insight.summary,
-    },
-    {
-      role: "Agent 3",
-      status: detail
-        ? sectionStatus("contradictions") === "concluded"
-          ? "completed"
-          : sectionStatus("contradictions") === "in_progress"
-            ? "running"
-            : "queued"
-        : insight.coverageStatus === "covered"
-          ? "completed"
-          : "awaiting",
-      task: "Doi chieu mau thuan giua cac nguon va xep hang confidence",
-      note:
-        latestMessage("evidence_verifier")?.content ||
-        "Kiem tra xem narrative bullish/bearish co xung dot hay khong.",
-    },
-    {
-      role: "Agent 4",
-      status: detail
-        ? detail.investigation.final_report
-          ? "completed"
-          : detail.investigation.status === "running"
-            ? "running"
-            : "queued"
-        : insight.coverageStatus === "covered"
-          ? "completed"
-          : "awaiting",
-      task: "Tong hop phan tich ky thuat thanh de xuat doc duoc tren dashboard",
-      note:
-        latestMessage("report_synthesizer")?.content ||
-        "Xuat final report voi muc confidence va cac diem can theo doi.",
+        `Kuromi se tong hop mission va spawn team dong khi can cho ${insight.pair.symbol}.`,
     },
   ];
+
+  const collaboratorRoles = detail
+    ? Array.from(
+        new Set(
+          detail.transcript
+            .map((message) => normalizeRole(message.agent_role))
+            .filter((role) => role && role !== "user" && !isKuromiRole(role)),
+        ),
+      )
+    : [];
+
+  if (!collaboratorRoles.length) {
+    tasks.push({
+      role: "Dynamic Team",
+      status: statusFromInvestigation(detail?.investigation.status, insight.coverageStatus),
+      task: "Spawn cac collaborator theo nhu cau",
+      note:
+        detail?.investigation.status === "completed"
+          ? "Khong co collaborator runtime nao duoc luu trong transcript hien tai."
+          : `Kuromi co the dung spawn_team de tao cac member chuyen trach cho ${insight.pair.symbol}.`,
+    });
+    return tasks;
+  }
+
+  return tasks.concat(
+    collaboratorRoles.map((role) => ({
+      role: titleFromRole(role),
+      status: statusFromInvestigation(detail?.investigation.status, insight.coverageStatus),
+      task: `Dong gop goc nhin chuyen mon cho ${insight.pair.symbol}`,
+      note:
+        latestMessage(role)?.content ||
+        `Thanh vien runtime ${titleFromRole(role)} da tham gia phien trao doi noi bo cua Kuromi.`,
+    })),
+  );
+}
+
+function normalizeRole(role: string): string {
+  return role.trim().toLowerCase();
+}
+
+function isKuromiRole(role: string): boolean {
+  return ["kuromi", "kuromi_finance", "kuromi-finance", "coordinator"].includes(normalizeRole(role));
+}
+
+function statusFromInvestigation(
+  investigationStatus: string | undefined,
+  coverageStatus: PairCoverageStatus,
+): SubagentTask["status"] {
+  if (investigationStatus === "completed" || coverageStatus === "covered") return "completed";
+  if (investigationStatus === "running" || coverageStatus === "running") return "running";
+  if (investigationStatus === "queued" || coverageStatus === "queued") return "queued";
+  return "awaiting";
 }
 
 export function pairComposerDefaults(pair: ForexPair) {

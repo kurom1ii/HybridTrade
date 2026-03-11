@@ -645,24 +645,25 @@ pub async fn build_agent_statuses(pool: &SqlitePool) -> Result<Vec<AgentStatusVi
     )
     .fetch_all(pool)
     .await?;
+    let running_roles =
+        query_as::<_, (String,)>("SELECT agent_role FROM agent_runs WHERE status = 'running'")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-    let mut statuses = Vec::with_capacity(AgentRole::team().len());
-    for role in AgentRole::team() {
+    let mut statuses = Vec::with_capacity(AgentRole::visible_agents().len());
+    for role in AgentRole::visible_agents() {
         let heartbeat = heartbeats
             .iter()
-            .find(|item| item.component == "agent" && item.scope == role.as_str());
+            .find(|item| item.component == "agent" && role.matches_stored_role(&item.scope));
         let last_message = messages
             .iter()
-            .find(|item| item.agent_role == role.as_str())
+            .find(|item| role.matches_stored_role(&item.agent_role))
             .map(|item| item.content.clone());
-        let open_runs = query_as::<_, (i64,)>(
-            "SELECT COUNT(1) FROM agent_runs WHERE agent_role = ?1 AND status = 'running'",
-        )
-        .bind(role.as_str())
-        .fetch_one(pool)
-        .await
-        .map(|row| row.0)
-        .unwrap_or(0);
+        let open_runs = running_roles
+            .iter()
+            .filter(|(agent_role,)| role.matches_stored_role(agent_role))
+            .count() as i64;
 
         statuses.push(AgentStatusView {
             role: role.as_str().to_string(),

@@ -20,28 +20,28 @@ export default function AgentsPage() {
       <div className="min-w-0 flex-1 space-y-6">
         <PageTitle
           title="Agent Console"
-          subtitle="Trang thai cac debug agent, heartbeat gan nhat, va danh sach investigation duoc luu trong backend."
+          subtitle="Trang thai cua Kuromi Finance, heartbeat gan nhat va queue investigation duoc luu trong backend."
           breadcrumb="DASHBOARD / AGENTS"
         />
 
         <StaggerGrid>
           <div className="grid grid-cols-3 gap-4">
             <StatsCard
-              title="Healthy Agents"
+              title="Healthy Agent"
               value={String(data?.agent_statuses.filter((item) => item.status === "healthy").length ?? 0)}
-              change="Heartbeat va tool calls on dinh"
+              change="Kuromi dang heartbeat va tool calls on dinh"
               changeType="profit"
             />
             <StatsCard
-              title="Available Agents"
+              title="Visible Agents"
               value={String(data?.agent_statuses.length ?? 0)}
-              change="So agent role backend expose cho debug chat"
+              change="Backend chi expose Kuromi Finance cho debug chat"
               changeType="neutral"
             />
             <StatsCard
               title="Warnings"
               value={String(data?.agent_statuses.filter((item) => item.status === "warning" || item.status === "stale").length ?? 0)}
-              change={error ? error : "Agent roles co warning/stale se can can thiệp"}
+              change={error ? error : "Neu Kuromi warning/stale thi can kiem tra provider, tool hoac heartbeat"}
               changeType={(data?.agent_statuses.some((item) => item.status === "warning" || item.status === "stale") || Boolean(error)) ? "loss" : "neutral"}
             />
           </div>
@@ -71,7 +71,7 @@ export default function AgentsPage() {
                 </div>
 
                 <p className="mt-3 text-[11px] leading-relaxed text-text-secondary">
-                  {agent.last_message ? truncate(agent.last_message, 180) : "Chua co message moi tu agent nay."}
+                  {agent.last_message ? truncate(agent.last_message, 180) : "Chua co message moi tu Kuromi."}
                 </p>
               </div>
             ))

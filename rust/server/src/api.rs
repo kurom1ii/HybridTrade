@@ -169,7 +169,7 @@ async fn debug_agents(State(state): State<Arc<AppState>>) -> AppResult<Json<Vec<
     let providers = state.providers.available_provider_names();
     let default_provider = state.providers.default_provider_name();
 
-    let agents = AgentRole::team()
+    let agents = AgentRole::visible_agents()
         .iter()
         .map(|role| {
             let status = statuses
@@ -207,6 +207,9 @@ async fn debug_agent_chat(
     }
 
     let agent_role = AgentRole::from_str(&role).map_err(AppError::bad_request)?;
+    if !AgentRole::visible_agents().contains(&agent_role) {
+        return Err(AppError::bad_request("agent này không hỗ trợ debug chat"));
+    }
     let context = if request.include_backend_context.unwrap_or(true) {
         load_backend_context(&state, request.investigation_id.as_deref()).await?
     } else {

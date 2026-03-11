@@ -124,6 +124,10 @@ pub struct ProviderConfig {
     pub model: String,
     #[serde(default)]
     pub api_key_env: String,
+    #[serde(default = "default_request_retries")]
+    pub request_retries: usize,
+    #[serde(default = "default_retry_backoff_ms")]
+    pub retry_backoff_ms: u64,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
     #[serde(default = "default_temperature")]
@@ -158,8 +162,6 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub allowed_agents: Vec<String>,
-    #[serde(default)]
     pub timeout_ms: u64,
     #[serde(default)]
     pub command: String,
@@ -175,8 +177,6 @@ pub struct NativeToolConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub allowed_agents: Vec<String>,
-    #[serde(default)]
     pub timeout_ms: u64,
 }
 
@@ -187,6 +187,8 @@ impl Default for ProviderConfig {
             base_url: String::new(),
             model: String::new(),
             api_key_env: String::new(),
+            request_retries: default_request_retries(),
+            retry_backoff_ms: default_retry_backoff_ms(),
             max_tokens: default_max_tokens(),
             temperature: default_temperature(),
             compact_threshold_chars: default_compact_threshold_chars(),
@@ -239,6 +241,14 @@ fn default_chat_provider() -> String {
 
 fn default_max_tokens() -> u32 {
     1200
+}
+
+fn default_request_retries() -> usize {
+    2
+}
+
+fn default_retry_backoff_ms() -> u64 {
+    1_500
 }
 
 fn default_temperature() -> f32 {
