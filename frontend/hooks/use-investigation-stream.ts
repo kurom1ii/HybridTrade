@@ -8,10 +8,6 @@ export type StreamStatus = "idle" | "connecting" | "connected" | "error";
 
 const EVENT_TYPES = [
   "investigation.updated",
-  "agent.message",
-  "finding.created",
-  "section.concluded",
-  "run.completed",
   "heartbeat",
   "job.status",
 ];
@@ -54,4 +50,3 @@ export function useInvestigationStream(
 
   return status;
 }
-

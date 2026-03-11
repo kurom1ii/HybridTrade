@@ -21,8 +21,8 @@ use crate::{
     models::{ChatTurn, DebugToolCall},
 };
 
-const MAX_TOOL_OUTPUT_CHARS: usize = 8_000;
-const MAX_TOOL_PREVIEW_CHARS: usize = 320;
+const MAX_TOOL_OUTPUT_CHARS: usize = 128000;
+const MAX_TOOL_PREVIEW_CHARS: usize = 32000;
 
 pub struct ToolRuntime {
     http_client: Client,

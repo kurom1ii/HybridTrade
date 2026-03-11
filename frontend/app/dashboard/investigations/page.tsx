@@ -90,14 +90,14 @@ function InvestigationsPageContent() {
         <div className="flex flex-col gap-6">
           <PageTitle
             title="Investigation Composer"
-            subtitle="Tao run moi cho forex pair, strategy brief hoac thematic scan roi theo doi transcript va ket luan tren detail page."
+            subtitle="Tao investigation moi cho forex pair, strategy brief hoac thematic scan roi theo doi metadata va section status tren detail page."
             breadcrumb="DASHBOARD / INVESTIGATIONS"
           />
 
           {prefilledPair ? (
             <div className="border border-cyan/30 bg-cyan-dim px-4 py-3 text-[12px] text-cyan">
               Composer da duoc prefill cho <span className="font-semibold">{prefilledPair}</span>.
-              Ban co the sua lai topic, tags va seed URLs truoc khi spawn subagents.
+              Ban co the sua lai topic, tags va seed URLs truoc khi luu investigation.
             </div>
           ) : null}
 
@@ -163,14 +163,14 @@ function InvestigationsPageContent() {
 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-[11px] text-text-secondary">
-                Scheduler, memory, SQLite va heartbeat se cap nhat tu dong sau khi run bat dau.
+                Metadata, sections, SQLite va SSE snapshot se duoc cap nhat khi investigation duoc tao.
               </div>
               <button
                 type="submit"
                 disabled={submitting}
                 className="bg-cyan px-4 py-2 text-[11px] font-bold tracking-[1px] text-black transition-colors hover:bg-cyan/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {submitting ? "SUBMITTING..." : prefilledPair ? "SPAWN FOREX SUBAGENTS" : "START INVESTIGATION"}
+                {submitting ? "SUBMITTING..." : prefilledPair ? "SAVE FOREX BRIEF" : "CREATE INVESTIGATION"}
               </button>
             </div>
           </motion.form>
@@ -180,7 +180,7 @@ function InvestigationsPageContent() {
               <div>
                 <h3 className="text-[14px] font-semibold">Investigation Queue</h3>
                 <p className="mt-1 text-[11px] text-text-secondary">
-                  Queue hien thi cac run da tao, bao gom pair-specific scans va broader research briefs.
+                  Queue hien thi cac investigation da tao cung snapshot metadata ban dau.
                 </p>
               </div>
 
@@ -201,7 +201,7 @@ function InvestigationsPageContent() {
                 <div className="px-5 py-6">
                   <EmptyState
                     title="Queue dang rong"
-                    description="Tao investigation dau tien o form ben tren de khoi dong doi multi-agent."
+                    description="Tao investigation dau tien o form ben tren de luu mot brief moi."
                   />
                 </div>
               ) : null}

@@ -55,17 +55,11 @@ A real-time trading dashboard that leverages autonomous AI agents to analyze for
 │            Rust · Axum · Tokio                  │
 │                                                 │
 │  ┌────────────────────────────────────────────┐ │
-│  │           AGENT PIPELINE                   │ │
+│  │     DEBUG AGENT + INVESTIGATIONS           │ │
 │  │                                            │ │
-│  │  Coordinator ──► Source Scout               │ │
-│  │       │                │                   │ │
-│  │       ▼                ▼                   │ │
-│  │  Technical     Evidence Verifier           │ │
-│  │  Analyst              │                   │ │
-│  │       │               │                   │ │
-│  │       └───────┬───────┘                   │ │
-│  │               ▼                            │ │
-│  │       Report Synthesizer                   │ │
+│  │  Investigation records + SSE snapshots    │ │
+│  │  Role-based debug chat profiles           │ │
+│  │  Native tools + MCP when configured       │ │
 │  └────────────────────────────────────────────┘ │
 │                                                 │
 │  SQLite · Heartbeats · Scheduler · MCP Tools    │
@@ -81,12 +75,10 @@ A real-time trading dashboard that leverages autonomous AI agents to analyze for
 - **Session timers** — Live clocks for Sydney, Tokyo, London, and New York sessions
 - **Signal filtering** — Filter by asset class, signal strength, and direction (BUY/SELL)
 
-### AI Agent System
-- **Coordinator** — Orchestrates investigation workflow and delegates tasks
-- **Source Scout** — Discovers and validates information sources from the public web
-- **Technical Analyst** — Performs technical analysis with chart pattern recognition
-- **Evidence Verifier** — Cross-references findings for accuracy and consistency
-- **Report Synthesizer** — Compiles agent outputs into actionable intelligence reports
+### Debug Agent Surface
+- **Role-based profiles** — Coordinator, Source Scout, Technical Analyst, Evidence Verifier, and Report Synthesizer are exposed as dedicated debug chat roles
+- **Tooling runtime** — Native tools and MCP servers can be enabled per role through backend config
+- **Capability visibility** — CLI and debug endpoints expose available providers, tools, and MCP servers per agent role
 
 ### Dashboard Pages
 | Page | Description |
@@ -139,7 +131,7 @@ export ANTHROPIC_API_KEY=your_key
 cargo run -p hybridtrade-server
 ```
 
-The backend enables the investigation workflow and AI agent pipeline. The frontend trading dashboard works independently with mock data.
+The backend stores investigation snapshots, serves dashboard data, and exposes debug agent chat. The frontend trading dashboard works independently with mock data.
 
 ## Project Structure
 
@@ -164,7 +156,7 @@ HybridTrade/
 │   │   └── ui/                      # Shared UI primitives
 │   └── lib/                         # Utils, types, API clients
 ├── rust/
-│   ├── server/                      # Axum backend + agent pipeline
+│   ├── server/                      # Axum backend + debug agent runtime
 │   ├── agent-cli/                   # Debug CLI for agents
 │   └── config/                      # App, MCP, scheduler configs
 ├── docs/                            # Vietnamese documentation

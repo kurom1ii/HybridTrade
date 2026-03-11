@@ -5,7 +5,7 @@ use serde_json::json;
 use tokio::time::{interval, Duration};
 use tracing::error;
 
-use crate::{db, runner, AppState};
+use crate::{db, AppState};
 
 pub fn start_background_workers(state: Arc<AppState>) {
     start_service_heartbeat(state.clone());
@@ -104,19 +104,6 @@ async fn execute_schedule(
                 None,
                 &json!({ "schedule": schedule.name, "status": "completed", "removed": removed }),
             );
-        }
-        "investigation_refresh" => {
-            if let Some(investigation_id) = db::from_json_value(&schedule.payload_json)
-                .get("investigation_id")
-                .and_then(|value| value.as_str())
-            {
-                runner::spawn_investigation(state.clone(), investigation_id.to_string());
-                state.events.publish(
-                    "job.status",
-                    Some(investigation_id.to_string()),
-                    &json!({ "schedule": schedule.name, "status": "spawned" }),
-                );
-            }
         }
         other => {
             state.events.publish(

@@ -1,7 +1,6 @@
 import {
   CreateInvestigationPayload,
   DashboardResponse,
-  FollowUpPayload,
   InvestigationDetail,
   InvestigationSummary,
   ScheduleView,
@@ -67,13 +66,6 @@ export function createInvestigation(payload: CreateInvestigationPayload): Promis
   });
 }
 
-export function submitFollowUp(investigationId: string, payload: FollowUpPayload): Promise<void> {
-  return apiFetch<void>(`/api/investigations/${investigationId}/follow-ups`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
 export function fetchAgentStatuses(): Promise<AgentStatusView[]> {
   return apiFetch<AgentStatusView[]>("/api/agents/status");
 }
@@ -85,4 +77,3 @@ export function fetchHeartbeats(): Promise<HeartbeatView[]> {
 export function fetchSchedules(): Promise<ScheduleView[]> {
   return apiFetch<ScheduleView[]>("/api/schedules");
 }
-

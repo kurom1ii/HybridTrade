@@ -249,7 +249,7 @@ function buildPairInsight(
       relatedFindings[0]?.summary ||
       linkedInvestigation?.summary ||
       linkedInvestigation?.goal ||
-      `Chua co du lieu AI cho ${pair.symbol}. Nen spawn subagents de thu thap source va tong hop technical bias.`,
+      `Chua co du lieu AI cho ${pair.symbol}. Nen tao investigation moi de luu brief va theo doi snapshot hien co.`,
     keyLevels,
     signals,
     timeframe: extractTimeframe(linkedInvestigation?.goal || linkedInvestigation?.summary || relatedFindings[0]?.summary || pair.note),
@@ -340,4 +340,3 @@ export function defaultSelectedPair(pairs: ForexPairInsight[]) {
 export function categoryMatches(category: ForexCategory | "All", insight: ForexPairInsight) {
   return category === "All" || insight.pair.category === category;
 }
-

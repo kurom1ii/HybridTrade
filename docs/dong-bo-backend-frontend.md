@@ -25,7 +25,6 @@ Nói thẳng: chỉ sửa backend không thể làm các page trading mock trở
 - `/dashboard/investigations/[id]`
   Khớp với:
   - `GET /api/investigations/:id`
-  - `POST /api/investigations/:id/follow-ups`
   - `GET /api/investigations/:id/stream`
 
 - `/dashboard/agents`

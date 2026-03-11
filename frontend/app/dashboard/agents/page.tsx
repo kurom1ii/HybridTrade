@@ -20,7 +20,7 @@ export default function AgentsPage() {
       <div className="min-w-0 flex-1 space-y-6">
         <PageTitle
           title="Agent Console"
-          subtitle="Trang thai doi agent, so run dang mo, va activity moi nhat tren memory pipeline."
+          subtitle="Trang thai cac debug agent, heartbeat gan nhat, va danh sach investigation duoc luu trong backend."
           breadcrumb="DASHBOARD / AGENTS"
         />
 
@@ -33,9 +33,9 @@ export default function AgentsPage() {
               changeType="profit"
             />
             <StatsCard
-              title="Open Runs"
-              value={String(data?.agent_statuses.reduce((sum, item) => sum + item.open_runs, 0) ?? 0)}
-              change="Tong so agent runs dang hoat dong"
+              title="Available Agents"
+              value={String(data?.agent_statuses.length ?? 0)}
+              change="So agent role backend expose cho debug chat"
               changeType="neutral"
             />
             <StatsCard
@@ -67,8 +67,7 @@ export default function AgentsPage() {
                 </div>
 
                 <div className="mt-4 flex items-center gap-3 text-[10px] uppercase tracking-[0.8px] text-text-muted">
-                  <span>{agent.open_runs} open runs</span>
-                  <span>{formatRelativeTime(agent.last_seen_at)}</span>
+                  <span>Heartbeat {formatRelativeTime(agent.last_seen_at)}</span>
                 </div>
 
                 <p className="mt-3 text-[11px] leading-relaxed text-text-secondary">
@@ -80,7 +79,7 @@ export default function AgentsPage() {
             <div className="col-span-2">
               <EmptyState
                 title="Chua co agent status"
-                description={loading ? "Dang tai trang thai agent..." : "Khoi dong backend de xem heartbeat va run state."}
+                description={loading ? "Dang tai trang thai agent..." : "Khoi dong backend de xem heartbeat va capability cua agent."}
               />
             </div>
           )}
@@ -89,31 +88,6 @@ export default function AgentsPage() {
 
       <SlideIn direction="right" delay={0.2}>
         <div className="-m-6 w-[340px] shrink-0 space-y-4 border-l border-border bg-panel p-5">
-          <div>
-            <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[1px] text-text-secondary">Recent Findings Feed</h3>
-            <div className="space-y-3">
-              {data?.recent_findings.length ? (
-                data.recent_findings.map((finding) => (
-                  <div key={finding.id} className="border border-border bg-card px-3 py-3">
-                    <div className="text-[11px] font-semibold text-cyan">{finding.title}</div>
-                    <p className="mt-1 text-[11px] text-text-secondary">{truncate(finding.summary, 140)}</p>
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
-                      <span>{finding.agent_role}</span>
-                      <span>{formatRelativeTime(finding.created_at)}</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <EmptyState
-                  title="Chua co findings moi"
-                  description="Finding feed se cap nhat sau khi investigation moi hoan thanh phan phan tich ky thuat."
-                />
-              )}
-            </div>
-          </div>
-
-          <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
-
           <div>
             <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[1px] text-text-secondary">Investigation Queue</h3>
             <div className="space-y-2">
@@ -130,7 +104,7 @@ export default function AgentsPage() {
               ) : (
                 <EmptyState
                   title="Queue rong"
-                  description="Khi co investigation moi, coordinator va member agents se xuat hien tai day."
+                  description="Khi co investigation moi, snapshot metadata se xuat hien tai day."
                 />
               )}
             </div>
@@ -140,4 +114,3 @@ export default function AgentsPage() {
     </div>
   );
 }
-

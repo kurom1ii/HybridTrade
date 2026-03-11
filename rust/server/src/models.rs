@@ -85,13 +85,6 @@ pub struct CreateInvestigationRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FollowUpRequest {
-    pub question: String,
-    pub target_section: Option<String>,
-    pub reuse_sources: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateScheduleRequest {
     pub name: String,
     pub cron_expr: String,

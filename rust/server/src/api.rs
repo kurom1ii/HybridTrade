@@ -18,7 +18,7 @@ use crate::{
     db,
     models::{AgentRole, DebugAgentView},
     providers::{AgentChatOptions, AgentPromptContext},
-    runner, AppState,
+    AppState,
 };
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -31,7 +31,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/investigations/:id", get(get_investigation))
         .route("/api/investigations/:id/stream", get(stream_investigation))
-        .route("/api/investigations/:id/follow-ups", post(create_follow_up))
         .route("/api/agents/status", get(agent_status))
         .route("/api/heartbeats", get(heartbeats))
         .route("/api/schedules", get(list_schedules).post(create_schedule))
@@ -86,7 +85,6 @@ async fn create_investigation(
         Some(row.id.clone()),
         &detail.investigation,
     );
-    runner::spawn_investigation(state, row.id);
     Ok((StatusCode::CREATED, Json(detail)))
 }
 
@@ -96,19 +94,6 @@ async fn get_investigation(
 ) -> AppResult<Json<crate::models::InvestigationDetail>> {
     ensure_investigation(&state, &id).await?;
     Ok(Json(db::build_investigation_detail(&state.db, &id).await?))
-}
-
-async fn create_follow_up(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::models::FollowUpRequest>,
-) -> AppResult<StatusCode> {
-    ensure_investigation(&state, &id).await?;
-    if request.question.trim().is_empty() {
-        return Err(AppError::bad_request("question is required"));
-    }
-    runner::spawn_follow_up(state, id, request.question, request.target_section);
-    Ok(StatusCode::ACCEPTED)
 }
 
 async fn agent_status(

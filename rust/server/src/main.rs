@@ -4,7 +4,6 @@ mod db;
 mod events;
 mod models;
 mod providers;
-mod runner;
 mod scheduler;
 mod skills;
 mod tool_runtime;

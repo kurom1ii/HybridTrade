@@ -14,7 +14,7 @@ Mục tiêu của bản mới:
 
 ## Kiến trúc hiện tại
 
-Mã nguồn backend nằm trong `rust/server/src/` với 11 file:
+Mã nguồn backend nằm trong `rust/server/src/` với 10 file:
 
 - `main.rs`: boot app, load config, migrate DB, start worker nền, serve HTTP.
 - `api.rs`: toàn bộ HTTP route.
@@ -23,7 +23,6 @@ Mã nguồn backend nằm trong `rust/server/src/` với 11 file:
 - `events.rs`: event bus cho SSE.
 - `models.rs`: request/response types và DB row types.
 - `providers.rs`: định tuyến provider AI, build system prompt và gọi OpenAI hoặc Anthropic.
-- `runner.rs`: pipeline investigation và follow-up.
 - `scheduler.rs`: heartbeat service + cron loop.
 - `skills.rs`: nạp Markdown skill chung và theo agent.
 - `tool_runtime.rs`: đăng ký native tools, MCP tools và thực thi tool calls trong debug chat.
@@ -40,7 +39,6 @@ Các route đang được giữ ổn định để frontend hiện tại tiếp 
 - `POST /api/investigations`
 - `GET /api/investigations/:id`
 - `GET /api/investigations/:id/stream`
-- `POST /api/investigations/:id/follow-ups`
 - `GET /api/agents/status`
 - `GET /api/heartbeats`
 - `GET /api/schedules`
@@ -63,29 +61,9 @@ Khi frontend gọi `POST /api/investigations`, backend sẽ:
 
 1. tạo investigation và sections trong SQLite với trạng thái `queued`;
 2. trả ngay `InvestigationDetail` ban đầu;
-3. spawn background task để chạy pipeline;
-4. publish SSE để frontend detail page tự reload.
+3. publish SSE `investigation.updated` để frontend detail page có thể reload snapshot.
 
-Pipeline hiện tại cố ý đơn giản và deterministic:
-
-- `Coordinator`: ghi plan message.
-- `Source Scout`: chuẩn hóa seed URLs thành sources.
-- `Technical Analyst`: suy ra bias, confidence, key levels bằng heuristic nhẹ từ topic/goal/seed URLs.
-- `Evidence Verifier`: đánh dấu narrative đồng hướng hay mixed.
-- `Report Synthesizer`: dựng final report ngắn gọn cho detail page.
-
-Điểm quan trọng: pipeline investigation mặc định vẫn đơn giản và không phụ thuộc tool ngoài. Tuy nhiên nhánh debug chat của agent có thể nạp native tools hoặc MCP theo cấu hình để phục vụ đọc file, chạy lệnh hoặc debug trình duyệt.
-
-## Follow-up
-
-`POST /api/investigations/:id/follow-ups` hoạt động theo kiểu lightweight:
-
-- ghi user message;
-- đọc sections và findings hiện có;
-- sinh coordinator reply ngắn;
-- publish SSE `agent.message` và `investigation.updated`.
-
-Không có sub-run riêng cho follow-up.
+Investigation hiện chỉ là bản ghi và snapshot metadata. Backend không còn tự spawn runner để sinh transcript, findings, sources hoặc final report. Nhánh debug chat của agent vẫn có thể nạp native tools hoặc MCP theo cấu hình để phục vụ đọc file, chạy lệnh hoặc debug trình duyệt.
 
 ## Database
 
@@ -115,7 +93,6 @@ Các `job_type` đang hỗ trợ:
 
 - `heartbeat_sweep`
 - `memory_compaction`
-- `investigation_refresh`
 
 `memory_compaction` trong bản mới là cleanup nhẹ cho dữ liệu lịch sử, không còn liên quan tới memory pipeline cũ.
 

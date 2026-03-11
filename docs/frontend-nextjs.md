@@ -53,7 +53,6 @@ Các entrypoint quan trọng:
 - `/dashboard/investigations/[id]`
   - fetch chi tiết bằng `GET /api/investigations/:id`
   - nhận realtime update qua SSE `GET /api/investigations/:id/stream`
-  - gửi follow-up bằng `POST /api/investigations/:id/follow-ups`
 
 - `/dashboard/agents`
   - dùng `GET /api/dashboard`
@@ -91,7 +90,7 @@ Những màn này đang render từ mảng dữ liệu hardcoded trong file page
 - `ScheduleView`
 - `AgentStatusView`
 - `DashboardResponse`
-- payload type cho `createInvestigation` và `followUp`
+- payload type cho `createInvestigation`
 
 Các type này đang khớp khá tốt với struct Rust trả về từ backend.
 
@@ -103,7 +102,6 @@ Các type này đang khớp khá tốt với struct Rust trả về từ backend
 - `fetchInvestigations()`
 - `fetchInvestigation(id)`
 - `createInvestigation(payload)`
-- `submitFollowUp(id, payload)`
 - `fetchAgentStatuses()`
 - `fetchHeartbeats()`
 - `fetchSchedules()`
@@ -111,7 +109,7 @@ Các type này đang khớp khá tốt với struct Rust trả về từ backend
 
 Base URL lấy từ `NEXT_PUBLIC_API_BASE_URL`, mặc định là `http://127.0.0.1:8080`.
 
-Backend Rust mới phía sau các route này đã được giản lược mạnh: không còn phụ thuộc tool/MCP và tập trung vào một investigation pipeline nhỏ, ổn định theo contract hiện có.
+Backend Rust mới phía sau các route này đã được giản lược mạnh: investigation chỉ còn là snapshot metadata/sections, còn nhánh debug agent là nơi dùng tool/MCP khi cần.
 
 ### 5.3 Polling và SSE
 
@@ -126,10 +124,6 @@ Backend Rust mới phía sau các route này đã được giản lược mạnh
 - mở `EventSource` tới investigation stream;
 - lắng nghe các event:
   - `investigation.updated`
-  - `agent.message`
-  - `finding.created`
-  - `section.concluded`
-  - `run.completed`
   - `heartbeat`
   - `job.status`
 - khi nhận event, page detail hiện tại chỉ `reload()` lại snapshot toàn bộ investigation.
@@ -157,12 +151,9 @@ Trang `/dashboard/investigations/[id]` hiển thị:
 
 - metadata của investigation;
 - section conclusions;
-- final report;
-- transcript agent;
-- findings;
-- sources;
+- stored summary;
+- seed URLs;
 - heartbeats;
-- form follow-up.
 
 Sau khi stream nhận được event, trang reload lại toàn bộ `InvestigationDetail`. Cách này đơn giản và đúng chức năng, nhưng chưa tối ưu vì chưa merge event cục bộ.
 

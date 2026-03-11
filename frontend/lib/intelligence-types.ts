@@ -132,12 +132,6 @@ export interface CreateInvestigationPayload {
   seed_urls?: string[];
 }
 
-export interface FollowUpPayload {
-  question: string;
-  target_section?: string;
-  reuse_sources?: boolean;
-}
-
 export interface CreateSchedulePayload {
   name: string;
   cron_expr: string;
@@ -152,4 +146,3 @@ export interface AppStreamEvent<T = unknown> {
   payload: T;
   timestamp: string;
 }
-
