@@ -1,10 +1,10 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::models::ChatTurn;
+use crate::agents::models::{ChatTurn, DebugToolCall};
 
-const DEFAULT_TEAM_ROUNDS: usize = 2;
-const MAX_TEAM_ROUNDS: usize = 4;
+const DEFAULT_TEAM_ROUNDS: usize = 3;
+const MAX_TEAM_ROUNDS: usize = 6;
 const MAX_TEAM_MEMBERS: usize = 6;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,6 +55,8 @@ pub(crate) struct SpawnTeamTranscriptEntry {
     pub(crate) speaker: String,
     pub(crate) responsibility: String,
     pub(crate) content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tool_calls: Vec<DebugToolCall>,
 }
 
 #[derive(Debug, Clone, Serialize)]

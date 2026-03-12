@@ -1,4 +1,10 @@
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Client;
@@ -11,6 +17,10 @@ use crate::config::ProviderConfig;
 use super::{
     super::models::ChatTurn, super::tool_runtime::runtime::ToolRuntime, hub::ProviderKind,
 };
+
+const DEFAULT_PROVIDER_HTTP_LOG_PATH: &str = "./logs/provider-http-requests.json";
+
+static PROVIDER_HTTP_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct OpenAiFunctionCall {
@@ -88,9 +98,16 @@ async fn call_openai(
     );
     input.push(openai_response_input("user", message));
 
-    let tools = openai_tool_specs(tool_runtime);
+    let tools_value: Option<Value> = {
+        let tools = openai_tool_specs(tool_runtime);
+        if tools.is_empty() {
+            None
+        } else {
+            Some(Value::Array(tools))
+        }
+    };
 
-    for _ in 0..8 {
+    loop {
         let mut payload = json!({
             "model": config.model,
             "input": input.clone(),
@@ -98,8 +115,8 @@ async fn call_openai(
             "temperature": temperature.unwrap_or(config.temperature),
         });
 
-        if !tools.is_empty() {
-            payload["tools"] = Value::Array(tools.clone());
+        if let Some(tools) = &tools_value {
+            payload["tools"] = tools.clone();
             payload["tool_choice"] = json!("auto");
         }
 
@@ -133,8 +150,6 @@ async fn call_openai(
             }));
         }
     }
-
-    bail!("OpenAI tool_calls vượt quá giới hạn vòng lặp cho phép")
 }
 
 async fn call_anthropic(
@@ -156,9 +171,16 @@ async fn call_anthropic(
         "content": [{ "type": "text", "text": message }],
     }));
 
-    let tools = anthropic_tool_specs(tool_runtime);
+    let tools_value: Option<Value> = {
+        let tools = anthropic_tool_specs(tool_runtime);
+        if tools.is_empty() {
+            None
+        } else {
+            Some(Value::Array(tools))
+        }
+    };
 
-    for _ in 0..8 {
+    loop {
         let mut payload = json!({
             "model": config.model,
             "system": system_prompt,
@@ -166,8 +188,8 @@ async fn call_anthropic(
             "max_tokens": max_tokens.unwrap_or(config.max_tokens),
         });
 
-        if !tools.is_empty() {
-            payload["tools"] = Value::Array(tools.clone());
+        if let Some(tools) = &tools_value {
+            payload["tools"] = tools.clone();
             payload["tool_choice"] = json!({ "type": "auto" });
         }
 
@@ -202,8 +224,6 @@ async fn call_anthropic(
             "content": tool_results,
         }));
     }
-
-    bail!("Anthropic tool_calls vượt quá giới hạn vòng lặp cho phép")
 }
 
 fn openai_tool_specs(tool_runtime: &ToolRuntime) -> Vec<Value> {
@@ -446,9 +466,13 @@ async fn send_provider_request_with_retry(
     let mut attempt = 0usize;
 
     loop {
-        let response = build_request(client, current_url.clone(), api_key, payload)
-            .send()
-            .await;
+        let request = build_request(client, current_url.clone(), api_key, payload)
+            .build()
+            .with_context(|| format!("không thể build request cho provider {provider}"))?;
+
+        log_provider_http_request(&request, payload);
+
+        let response = client.execute(request).await;
 
         match response {
             Ok(response) => {
@@ -517,6 +541,117 @@ async fn send_provider_request_with_retry(
             }
         }
     }
+}
+
+fn resolve_provider_http_log_path() -> PathBuf {
+    std::env::var("HYBRIDTRADE_PROVIDER_HTTP_LOG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_PROVIDER_HTTP_LOG_PATH))
+}
+
+pub(super) fn reset_provider_http_log_file() -> Result<()> {
+    let path = resolve_provider_http_log_path();
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create provider http log directory {:?}", parent))?;
+    }
+
+    fs::write(&path, "[]\n")
+        .with_context(|| format!("cannot reset provider http log file {:?}", path))?;
+
+    Ok(())
+}
+
+fn with_provider_http_log<T>(action: impl FnOnce(&PathBuf) -> Result<T>) -> Result<T> {
+    let lock = PROVIDER_HTTP_LOG_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock
+        .lock()
+        .map_err(|_| anyhow!("provider http log mutex bị poisoned"))?;
+
+    let path = resolve_provider_http_log_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create provider http log directory {:?}", parent))?;
+    }
+
+    action(&path)
+}
+
+fn log_provider_http_request(request: &reqwest::Request, payload: &Value) {
+    if let Err(error) = append_provider_http_request_log(request, payload) {
+        let log_path = resolve_provider_http_log_path();
+        warn!(
+            error = %error,
+            path = %log_path.display(),
+            url = %request.url(),
+            "không thể ghi provider HTTP request ra file log"
+        );
+    }
+}
+
+fn append_provider_http_request_log(request: &reqwest::Request, payload: &Value) -> Result<()> {
+    let headers = render_request_headers(request.headers());
+    let body = render_request_body(request, payload);
+    let entry = json!({
+        "headers": headers,
+        "body": body,
+    });
+
+    with_provider_http_log(|path| {
+        let existing = fs::read_to_string(path).unwrap_or_default();
+        let mut entries = serde_json::from_str::<Vec<Value>>(&existing).unwrap_or_default();
+        entries.push(entry);
+
+        let rendered = serde_json::to_string_pretty(&entries)?;
+        fs::write(path, format!("{rendered}\n"))?;
+        Ok(())
+    })
+}
+
+fn render_request_headers(headers: &reqwest::header::HeaderMap) -> Value {
+    let mut grouped = BTreeMap::<String, Vec<String>>::new();
+
+    for (name, value) in headers.iter() {
+        let value = value
+            .to_str()
+            .map(str::to_string)
+            .unwrap_or_else(|_| format!("<non-utf8:{} bytes>", value.as_bytes().len()));
+        grouped
+            .entry(name.as_str().to_string())
+            .or_default()
+            .push(value);
+    }
+
+    let headers = grouped
+        .into_iter()
+        .map(|(name, values)| {
+            let value = values.into_iter().map(Value::String).collect::<Vec<_>>();
+
+            let value = match value.as_slice() {
+                [single] => single.clone(),
+                _ => Value::Array(value),
+            };
+
+            (name, value)
+        })
+        .collect::<serde_json::Map<String, Value>>();
+
+    Value::Object(headers)
+}
+
+fn render_request_body(request: &reqwest::Request, payload: &Value) -> Value {
+    if let Some(bytes) = request.body().and_then(|body| body.as_bytes()) {
+        if let Ok(json) = serde_json::from_slice::<Value>(bytes) {
+            return json;
+        }
+
+        return String::from_utf8(bytes.to_vec())
+            .map(Value::String)
+            .unwrap_or_else(|_| Value::String(format!("<non-utf8-body:{} bytes>", bytes.len())));
+    }
+
+    payload.clone()
 }
 
 fn openai_request_builder<'a>(

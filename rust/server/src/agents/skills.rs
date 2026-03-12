@@ -6,17 +6,13 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use super::models::AgentRole;
-
 #[derive(Debug, Clone, Default)]
 pub struct SkillRegistry {
-    common: Vec<SkillDoc>,
-    per_agent: HashMap<String, Vec<SkillDoc>>,
+    commands: HashMap<String, SkillDoc>,
 }
 
 #[derive(Debug, Clone)]
 struct SkillDoc {
-    file_name: String,
     body: String,
 }
 
@@ -26,78 +22,50 @@ impl SkillRegistry {
             return Ok(Self::default());
         }
 
-        let common = load_markdown_files(&base_dir.join("common"))?;
-        let mut per_agent = HashMap::new();
-
-        let agents_dir = base_dir.join("agents");
-        if agents_dir.exists() {
-            for role in AgentRole::visible_agents() {
-                let docs = load_agent_docs(&agents_dir, role.as_str())?;
-                if !docs.is_empty() {
-                    per_agent.insert(role.as_str().to_string(), docs);
-                }
-            }
-        }
-
-        Ok(Self { common, per_agent })
+        Ok(Self {
+            commands: load_command_files(&base_dir.join("commands"))?,
+        })
     }
 
-    pub fn common_filenames(&self) -> Vec<String> {
-        self.common
-            .iter()
-            .map(|item| item.file_name.clone())
-            .collect()
+    pub fn available_commands(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.commands.keys().cloned().collect();
+        names.sort();
+        names
     }
 
-    pub fn common_markdown(&self) -> String {
-        render_docs(&self.common)
+    pub fn command_markdown(&self, name: &str) -> Option<String> {
+        self.commands
+            .get(name)
+            .map(|doc| doc.body.trim().to_string())
+            .filter(|body| !body.is_empty())
     }
 
-    pub fn agent_filenames(&self, role: AgentRole) -> Vec<String> {
-        self.per_agent
-            .get(role.as_str())
-            .map(|items| items.iter().map(|item| item.file_name.clone()).collect())
-            .unwrap_or_default()
+    pub fn resolve_command_name(&self, name: &str) -> Option<String> {
+        self.commands
+            .keys()
+            .find(|candidate| candidate.eq_ignore_ascii_case(name.trim()))
+            .cloned()
     }
 
-    pub fn agent_markdown(&self, role: AgentRole) -> String {
-        self.per_agent
-            .get(role.as_str())
-            .map(|items| render_docs(items))
-            .unwrap_or_default()
+    pub fn mentioned_commands(&self, message: &str) -> Vec<String> {
+        let lowered = message.to_ascii_lowercase();
+        let mut names = self.available_commands();
+        names.retain(|name| {
+            command_aliases(name)
+                .iter()
+                .any(|alias| lowered.contains(alias))
+        });
+        names
     }
 }
 
-fn load_agent_docs(agents_dir: &Path, role: &str) -> Result<Vec<SkillDoc>> {
-    let mut docs = Vec::new();
-
-    let role_keys = match role {
-        "kuromi" => vec!["kuromi", "coordinator"],
-        other => vec![other],
-    };
-
-    for key in role_keys {
-        let single_file = agents_dir.join(format!("{key}.md"));
-        if single_file.exists() {
-            docs.push(load_markdown_file(&single_file)?);
-        }
-
-        let role_dir = agents_dir.join(key);
-        if role_dir.exists() {
-            docs.extend(load_markdown_files(&role_dir)?);
-        }
-    }
-
-    Ok(docs)
-}
-
-fn load_markdown_files(dir: &Path) -> Result<Vec<SkillDoc>> {
+fn load_command_files(dir: &Path) -> Result<HashMap<String, SkillDoc>> {
     if !dir.exists() {
-        return Ok(Vec::new());
+        return Ok(HashMap::new());
     }
 
     let mut entries = fs::read_dir(dir)
-        .with_context(|| format!("không thể đọc thư mục skills {}", dir.display()))?
+        .with_context(|| format!("không thể đọc thư mục commands {}", dir.display()))?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("md"))
@@ -105,28 +73,45 @@ fn load_markdown_files(dir: &Path) -> Result<Vec<SkillDoc>> {
 
     entries.sort();
 
-    entries
-        .iter()
-        .map(|path| load_markdown_file(path))
-        .collect()
+    let mut commands = HashMap::new();
+    for path in entries {
+        let name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let doc = load_markdown_file(&path)?;
+        commands.insert(name, doc);
+    }
+
+    Ok(commands)
 }
 
 fn load_markdown_file(path: &Path) -> Result<SkillDoc> {
     let body = fs::read_to_string(path)
         .with_context(|| format!("không thể đọc file skill {}", path.display()))?;
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("untitled-skill.md")
-        .to_string();
 
-    Ok(SkillDoc { file_name, body })
+    Ok(SkillDoc { body })
 }
 
-fn render_docs(docs: &[SkillDoc]) -> String {
-    docs.iter()
-        .map(|doc| doc.body.trim())
-        .filter(|body| !body.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+fn command_aliases(name: &str) -> Vec<String> {
+    let lower = name.trim().to_ascii_lowercase();
+    let mut aliases = vec![lower.clone()];
+
+    let spaced = lower.replace(['-', '_'], " ");
+    if !aliases.iter().any(|value| value == &spaced) {
+        aliases.push(spaced);
+    }
+
+    let underscored = lower.replace(['-', ' '], "_");
+    if !aliases.iter().any(|value| value == &underscored) {
+        aliases.push(underscored);
+    }
+
+    let dashed = lower.replace(['_', ' '], "-");
+    if !aliases.iter().any(|value| value == &dashed) {
+        aliases.push(dashed);
+    }
+
+    aliases
 }

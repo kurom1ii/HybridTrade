@@ -95,13 +95,18 @@ pub(super) fn tool_output_is_error(value: &Value) -> bool {
 }
 
 pub(super) fn sanitize_tool_arguments(value: Value) -> Value {
+    sanitize_tool_arguments_inner(value, true)
+}
+
+fn sanitize_tool_arguments_inner(value: Value, root: bool) -> Value {
     match value {
-        Value::Null => json!({}),
+        Value::Null if root => json!({}),
+        Value::Null => Value::Null,
         Value::Object(object) => Value::Object(
             object
                 .into_iter()
                 .filter_map(|(key, value)| {
-                    let value = sanitize_tool_arguments(value);
+                    let value = sanitize_tool_arguments_inner(value, false);
                     if value.is_null() {
                         None
                     } else {
@@ -113,7 +118,7 @@ pub(super) fn sanitize_tool_arguments(value: Value) -> Value {
         Value::Array(items) => Value::Array(
             items
                 .into_iter()
-                .map(sanitize_tool_arguments)
+                .map(|value| sanitize_tool_arguments_inner(value, false))
                 .filter(|value| !value.is_null())
                 .collect(),
         ),
@@ -140,38 +145,6 @@ fn extract_text_from_tool_result(value: &Value) -> Option<String> {
     } else {
         Some(text)
     }
-}
-
-pub(super) fn extract_html_title(body: &str) -> String {
-    let lower = body.to_ascii_lowercase();
-    let Some(start) = lower.find("<title") else {
-        return String::new();
-    };
-    let Some(tag_end) = lower[start..].find('>') else {
-        return String::new();
-    };
-    let content_start = start + tag_end + 1;
-    let Some(end) = lower[content_start..].find("</title>") else {
-        return String::new();
-    };
-
-    collapse_whitespace(&body[content_start..content_start + end])
-}
-
-pub(super) fn strip_html_tags(body: &str) -> String {
-    let mut output = String::with_capacity(body.len());
-    let mut inside_tag = false;
-
-    for ch in body.chars() {
-        match ch {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => output.push(ch),
-            _ => {}
-        }
-    }
-
-    output
 }
 
 pub(super) fn collapse_whitespace(value: &str) -> String {
@@ -307,4 +280,27 @@ pub(super) fn resolve_requested_timeout(arguments: &Value, max_timeout: Duration
         .map(|value| value.max(1).min(max_ms))
         .map(Duration::from_millis)
         .unwrap_or(max_timeout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_tool_arguments;
+    use serde_json::json;
+
+    #[test]
+    fn sanitize_tool_arguments_drops_nested_null_fields() {
+        let sanitized = sanitize_tool_arguments(json!({
+            "filePath": null,
+            "verbose": false,
+        }));
+
+        assert_eq!(sanitized, json!({ "verbose": false }));
+    }
+
+    #[test]
+    fn sanitize_tool_arguments_keeps_root_object_shape() {
+        let sanitized = sanitize_tool_arguments(serde_json::Value::Null);
+
+        assert_eq!(sanitized, json!({}));
+    }
 }

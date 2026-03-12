@@ -1,10 +1,4 @@
 [[tools]]
-name = "fetch_page"
-kind = "native"
-enabled = true
-timeout_ms = 15000
-
-[[tools]]
 name = "extract_signals"
 kind = "native"
 enabled = true

@@ -2,6 +2,43 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ChatStreamEvent {
+    Connected,
+    PreResponse {
+        content: String,
+    },
+    TeamStarted {
+        mission: String,
+        members: Vec<String>,
+    },
+    TeamRound {
+        round: usize,
+        total: usize,
+        phase: String,
+    },
+    TeamToolCall {
+        member: String,
+        tool: String,
+        status: String,
+        output_preview: String,
+    },
+    TeamMemberResponse {
+        member: String,
+        round: usize,
+        content: String,
+        tool_calls: Vec<DebugToolCall>,
+    },
+    TeamCompleted,
+    Response {
+        data: Box<DebugAgentChatResponse>,
+    },
+    Error {
+        message: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
@@ -69,9 +106,7 @@ pub struct DebugAgentView {
     pub status: String,
     pub providers: Vec<String>,
     pub default_provider: String,
-    pub common_skills: Vec<String>,
-    pub agent_skills: Vec<String>,
-    pub skill_tools: Vec<String>,
+    pub available_commands: Vec<String>,
     pub mcp_servers: Vec<DebugMcpServerView>,
     pub native_tools: Vec<DebugToolView>,
 }

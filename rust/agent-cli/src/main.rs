@@ -1,10 +1,12 @@
 use std::{
+    collections::BTreeMap,
     collections::BTreeSet,
     io::{self, Write},
 };
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
@@ -92,13 +94,11 @@ struct DebugAgentView {
     providers: Vec<String>,
     default_provider: String,
     #[serde(default)]
+    available_commands: Vec<String>,
+    #[serde(default)]
     mcp_servers: Vec<DebugMcpServerView>,
     #[serde(default)]
     native_tools: Vec<DebugToolView>,
-    #[serde(default)]
-    common_skills: Vec<String>,
-    #[serde(default)]
-    agent_skills: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,6 +184,46 @@ struct ApiError {
     error: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum ChatStreamEvent {
+    Connected,
+    PreResponse {
+        content: String,
+    },
+    TeamStarted {
+        mission: String,
+        members: Vec<String>,
+    },
+    TeamRound {
+        round: usize,
+        total: usize,
+        #[serde(default)]
+        phase: String,
+    },
+    TeamToolCall {
+        member: String,
+        tool: String,
+        status: String,
+        output_preview: String,
+    },
+    TeamMemberResponse {
+        member: String,
+        round: usize,
+        content: String,
+        #[serde(default)]
+        tool_calls: Vec<DebugToolCall>,
+    },
+    TeamCompleted,
+    Response {
+        data: Box<DebugAgentChatResponse>,
+    },
+    Error {
+        message: String,
+    },
+}
+
 struct BackendClient {
     base_url: String,
     client: Client,
@@ -215,8 +255,96 @@ impl BackendClient {
         agent: &str,
         request: &DebugAgentChatRequest,
     ) -> Result<DebugAgentChatResponse> {
-        self.post_json(&format!("/api/debug/agents/{agent}/chat"), request)
+        let url = self.url(&format!("/api/debug/agents/{agent}/chat"));
+        let response = self
+            .client
+            .post(&url)
+            .json(request)
+            .send()
             .await
+            .with_context(|| format!("không thể gọi backend POST {url}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text()
+                .await
+                .context("không thể đọc phản hồi backend")?;
+            if let Ok(error) = serde_json::from_str::<ApiError>(&text) {
+                bail!("backend lỗi {}: {}", status, error.error);
+            }
+            bail!("backend lỗi {}: {}", status, text.trim());
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut final_response: Option<DebugAgentChatResponse> = None;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("lỗi đọc SSE stream")?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(event) = extract_sse_event(&mut buffer) {
+                match serde_json::from_str::<ChatStreamEvent>(&event) {
+                    Ok(ChatStreamEvent::Connected) => {}
+                    Ok(ChatStreamEvent::PreResponse { content }) => {
+                        println!();
+                        println!(">> {}", content);
+                        println!();
+                    }
+                    Ok(ChatStreamEvent::TeamStarted { mission, members }) => {
+                        println!();
+                        println!("=== Team: {} ===", mission);
+                        println!(
+                            "Members: {}",
+                            members.join(", ")
+                        );
+                    }
+                    Ok(ChatStreamEvent::TeamRound { round, total, phase }) => {
+                        let phase_label = if phase.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", phase)
+                        };
+                        println!();
+                        println!("--- Round {}/{}{} ---", round, total, phase_label);
+                    }
+                    Ok(ChatStreamEvent::TeamToolCall {
+                        member,
+                        tool,
+                        status,
+                        output_preview,
+                    }) => {
+                        let preview = single_line_preview(&output_preview, 120);
+                        println!(
+                            "[{}] tool: {} -> {} [{}]",
+                            member, tool, preview, status
+                        );
+                    }
+                    Ok(ChatStreamEvent::TeamMemberResponse {
+                        member,
+                        round: _,
+                        content,
+                        ..
+                    }) => {
+                        println!("[{}] {}", member, truncate_preview(&content, 300));
+                    }
+                    Ok(ChatStreamEvent::TeamCompleted) => {
+                        println!("=== Team Complete ===");
+                        println!();
+                    }
+                    Ok(ChatStreamEvent::Response { data }) => {
+                        final_response = Some(*data);
+                    }
+                    Ok(ChatStreamEvent::Error { message }) => {
+                        bail!("server error: {}", message);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        final_response.context("backend không trả về response event")
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -226,22 +354,6 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("không thể gọi backend GET {path}"))?;
-
-        decode_response(response).await
-    }
-
-    async fn post_json<B: Serialize, T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T> {
-        let response = self
-            .client
-            .post(self.url(path))
-            .json(body)
-            .send()
-            .await
-            .with_context(|| format!("không thể gọi backend POST {path}"))?;
 
         decode_response(response).await
     }
@@ -291,9 +403,14 @@ async fn run_agents(backend: &BackendClient) -> Result<()> {
         return Ok(());
     }
 
-    let common_skills = agents
+    let commands = agents
         .iter()
-        .flat_map(|agent| agent.common_skills.iter().cloned())
+        .flat_map(|agent| {
+            agent
+                .available_commands
+                .iter()
+                .map(|name| format!("/{name}"))
+        })
         .collect::<BTreeSet<_>>();
     let mcp_servers = agents
         .iter()
@@ -304,7 +421,7 @@ async fn run_agents(backend: &BackendClient) -> Result<()> {
         .flat_map(|agent| agent.native_tools.iter().map(|item| item.name.clone()))
         .collect::<BTreeSet<_>>();
 
-    println!("Skills chung: {}", join_set(&common_skills));
+    println!("Commands: {}", join_set(&commands));
     println!("MCP chung: {}", join_set(&mcp_servers));
     println!("Tools chung: {}", join_set(&native_tools));
     println!();
@@ -315,17 +432,22 @@ async fn run_agents(backend: &BackendClient) -> Result<()> {
         } else {
             agent.providers.join(", ")
         };
-        let agent_skills = if agent.agent_skills.is_empty() {
+        let commands = if agent.available_commands.is_empty() {
             "không có".to_string()
         } else {
-            agent.agent_skills.join(", ")
+            agent
+                .available_commands
+                .iter()
+                .map(|name| format!("/{name}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
 
         println!(
             "- {} ({}) | trạng thái: {} | provider mặc định: {} | khả dụng: {}",
             agent.role, agent.label, agent.status, agent.default_provider, providers,
         );
-        println!("  skills riêng: {}", agent_skills);
+        println!("  commands: {}", commands);
     }
 
     Ok(())
@@ -459,25 +581,35 @@ fn build_chat_request(
 }
 
 fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
+    let assistant_label = agent_label(&response.agent_role);
+    let assistant_content = render_assistant_content(&response.content);
+
+    println!("=== Assistant ===");
     println!(
-        "[agent: {} | provider: {} | model: {}]",
-        response.agent_role, response.provider, response.model
+        "{} | provider={} | model={}",
+        assistant_label, response.provider, response.model
     );
-    println!("{}", response.content.trim());
+
+    if let Some(chat_session_id) = response.chat_session_id.as_deref() {
+        println!("session={}", chat_session_id);
+    }
+
+    println!();
+    println!("{}", assistant_content);
+
+    print_tool_call_summary(&response.debug.tool_calls);
 
     if show_debug {
         println!();
+        println!("=== Debug ===");
         println!(
-            "[debug] investigation_id: {}",
-            response.investigation_id.as_deref().unwrap_or("không có")
+            "investigation_id={} | chat_session_id={} | history_count={}",
+            response.investigation_id.as_deref().unwrap_or("không có"),
+            response.chat_session_id.as_deref().unwrap_or("không có"),
+            response.debug.history_count,
         );
         println!(
-            "[debug] chat_session_id: {}",
-            response.chat_session_id.as_deref().unwrap_or("không có")
-        );
-        println!("[debug] history_count: {}", response.debug.history_count);
-        println!(
-            "[debug] compacted: {} | mode: {} | compacted_turns: {} | retained: {}/{} | chars: {} -> {}",
+            "compact={} | mode={} | compacted_turns={} | retained={}/{} | chars={} -> {}",
             yes_no(response.debug.compacted),
             response.debug.compact_mode.as_deref().unwrap_or("không"),
             response.debug.compacted_turns,
@@ -487,7 +619,7 @@ fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
             response.debug.estimated_chars_after,
         );
         println!(
-            "[debug] available_tools ({}): {}",
+            "available_tools ({}) = {}",
             response.debug.available_tools.len(),
             if response.debug.available_tools.is_empty() {
                 "không có".to_string()
@@ -495,32 +627,110 @@ fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
                 response.debug.available_tools.join(", ")
             }
         );
+
         if !response.debug.tool_runtime_warnings.is_empty() {
-            println!("[debug] tool_runtime_warnings:");
+            println!();
+            println!("tool_runtime_warnings:");
             for warning in &response.debug.tool_runtime_warnings {
                 println!("- {}", warning);
             }
         }
+
         if !response.debug.tool_calls.is_empty() {
-            println!("[debug] tool_calls:");
-            for call in &response.debug.tool_calls {
+            println!();
+            println!("tool_calls:");
+            for (index, call) in response.debug.tool_calls.iter().enumerate() {
                 println!(
-                    "- {} | source={} | status={} | input={} | output={} ",
-                    call.name, call.source, call.status, call.input, call.output_preview,
+                    "{}. {} | status={} | source={}",
+                    index + 1,
+                    call.name,
+                    call.status,
+                    call.source,
+                );
+                println!("   input: {}", format_json_preview(&call.input, 220));
+                println!(
+                    "   output: {}",
+                    single_line_preview(&call.output_preview, 220)
                 );
             }
         }
-        println!("[debug] system_prompt:\n{}", response.debug.system_prompt);
+
+        println!();
+        println!("system_prompt:");
+        println!("{}", response.debug.system_prompt);
+
         if let Some(context_preview) = response.debug.context_preview.as_deref() {
-            println!("[debug] context_preview:\n{}", context_preview);
+            println!();
+            println!("context_preview:");
+            println!("{}", context_preview);
         }
+
         if let Some(compact_summary_preview) = response.debug.compact_summary_preview.as_deref() {
-            println!(
-                "[debug] compact_summary_preview:\n{}",
-                compact_summary_preview
-            );
+            println!();
+            println!("compact_summary_preview:");
+            println!("{}", compact_summary_preview);
         }
     }
+}
+
+fn agent_label(role: &str) -> &str {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "kuromi" | "kuromi_finance" | "kuromi-finance" | "coordinator" => "Kuromi Finance",
+        "user" => "User",
+        _ => role,
+    }
+}
+
+fn render_assistant_content(content: &str) -> &str {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        "[assistant không trả nội dung text; hãy xem mục Tools hoặc Debug bên dưới]"
+    } else {
+        trimmed
+    }
+}
+
+fn print_tool_call_summary(tool_calls: &[DebugToolCall]) {
+    if tool_calls.is_empty() {
+        return;
+    }
+
+    let mut summaries = BTreeMap::<String, (usize, bool)>::new();
+    for call in tool_calls {
+        let entry = summaries.entry(call.name.clone()).or_insert((0, false));
+        entry.0 += 1;
+        entry.1 |= call.status != "completed";
+    }
+
+    println!();
+    println!("=== Tools Used ({}) ===", tool_calls.len());
+    for (name, (count, has_failure)) in summaries {
+        let status = if has_failure { "warning" } else { "ok" };
+        if count == 1 {
+            println!("- {} [{}]", name, status);
+        } else {
+            println!("- {} x{} [{}]", name, count, status);
+        }
+    }
+}
+
+fn format_json_preview(value: &serde_json::Value, max_chars: usize) -> String {
+    let rendered = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    truncate_preview(&rendered, max_chars)
+}
+
+fn single_line_preview(value: &str, max_chars: usize) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_preview(&collapsed, max_chars)
+}
+
+fn truncate_preview(value: &str, max_chars: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.len() <= max_chars {
+        return value.to_string();
+    }
+
+    chars.into_iter().take(max_chars).collect::<String>() + "..."
 }
 
 fn new_chat_session_id() -> String {
@@ -571,4 +781,21 @@ fn truncate_for_error(value: &str) -> String {
     }
 
     chars.into_iter().take(MAX_CHARS).collect::<String>() + "..."
+}
+
+fn extract_sse_event(buffer: &mut String) -> Option<String> {
+    loop {
+        let double_newline = buffer.find("\n\n")?;
+        let block = buffer[..double_newline].to_string();
+        *buffer = buffer[double_newline + 2..].to_string();
+
+        for line in block.lines() {
+            if let Some(data) = line.strip_prefix("data:") {
+                let data = data.trim();
+                if !data.is_empty() {
+                    return Some(data.to_string());
+                }
+            }
+        }
+    }
 }

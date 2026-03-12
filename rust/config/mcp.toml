@@ -1,5 +1,3 @@
-skill_tools = ["chrome-devtools", "dom-inspection", "network-inspection", "console-inspection"]
-
 [[mcp_servers]]
 name = "chrome-devtools"
 enabled = true

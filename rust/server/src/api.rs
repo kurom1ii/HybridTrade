@@ -1,4 +1,4 @@
-use std::{convert::Infallible, str::FromStr, sync::Arc};
+use std::{convert::Infallible, str::FromStr, sync::Arc, time::Duration};
 
 use axum::{
     extract::{Path, State},
@@ -12,12 +12,13 @@ use axum::{
 };
 use futures_util::{stream, Stream, StreamExt};
 use serde_json::json;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
 
 use crate::{
     agents::{
-        AgentChatOptions, AgentPromptContext, AgentRole, DebugAgentChatRequest,
-        DebugAgentChatResponse, DebugAgentView, ProviderStatusView,
+        AgentChatOptions, AgentPromptContext, AgentRole, ChatStreamEvent, DebugAgentChatRequest,
+        DebugAgentView, ProviderStatusView,
     },
     db, AppState,
 };
@@ -185,9 +186,7 @@ async fn debug_agents(State(state): State<Arc<AppState>>) -> AppResult<Json<Vec<
                 status,
                 providers: providers.clone(),
                 default_provider: default_provider.clone(),
-                common_skills: capabilities.common_skills,
-                agent_skills: capabilities.agent_skills,
-                skill_tools: capabilities.skill_tools,
+                available_commands: capabilities.available_commands,
                 mcp_servers: capabilities.mcp_servers,
                 native_tools: capabilities.native_tools,
             }
@@ -201,7 +200,7 @@ async fn debug_agent_chat(
     State(state): State<Arc<AppState>>,
     Path(role): Path<String>,
     Json(request): Json<DebugAgentChatRequest>,
-) -> AppResult<Json<DebugAgentChatResponse>> {
+) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
     if request.message.trim().is_empty() {
         return Err(AppError::bad_request("message là bắt buộc"));
     }
@@ -216,23 +215,42 @@ async fn debug_agent_chat(
         None
     };
 
-    let response = state
-        .providers
-        .chat(
-            agent_role,
-            AgentChatOptions {
-                provider: request.provider,
-                chat_session_id: request.chat_session_id,
-                history: request.history,
-                message: request.message,
-                max_tokens: request.max_tokens,
-                temperature: request.temperature,
-                context,
-            },
-        )
-        .await?;
+    let (tx, rx) = mpsc::unbounded_channel::<ChatStreamEvent>();
+    let _ = tx.send(ChatStreamEvent::Connected);
 
-    Ok(Json(response))
+    let providers = state.providers.clone();
+    tokio::spawn(async move {
+        match providers
+            .chat(
+                agent_role,
+                AgentChatOptions {
+                    provider: request.provider,
+                    chat_session_id: request.chat_session_id,
+                    history: request.history,
+                    message: request.message,
+                    max_tokens: request.max_tokens,
+                    temperature: request.temperature,
+                    context,
+                },
+                Some(tx.clone()),
+            )
+            .await
+        {
+            Ok(response) => {
+                let _ = tx.send(ChatStreamEvent::Response { data: Box::new(response) });
+            }
+            Err(e) => {
+                let _ = tx.send(ChatStreamEvent::Error {
+                    message: e.to_string(),
+                });
+            }
+        }
+    });
+
+    let stream = UnboundedReceiverStream::new(rx).map(|event| {
+        Ok(Event::default().data(serde_json::to_string(&event).unwrap_or_default()))
+    });
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
 async fn stream_investigation(

@@ -11,17 +11,15 @@ use super::{
     runtime::{ToolDefinition, ToolExecutor, ToolRuntime},
     utils::{
         collapse_whitespace, collect_keywords, count_keyword_hits, ensure_path_is_within_workspace,
-        extract_candidate_numbers, extract_domain, extract_html_title, find_timeframes,
-        normalize_path_for_workspace, optional_bool_arg, optional_raw_string_arg,
-        optional_string_arg, optional_usize_arg, required_raw_string_arg, required_string_arg,
-        resolve_requested_timeout, string_array_arg, strip_html_tags, truncate_chars,
-        MAX_TOOL_OUTPUT_CHARS,
+        extract_candidate_numbers, extract_domain, find_timeframes, normalize_path_for_workspace,
+        optional_bool_arg, optional_raw_string_arg, optional_string_arg, optional_usize_arg,
+        required_raw_string_arg, required_string_arg, resolve_requested_timeout, string_array_arg,
+        truncate_chars, MAX_TOOL_OUTPUT_CHARS,
     },
 };
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum NativeToolKind {
-    FetchPage,
     ExtractSignals,
     MemoryLookup,
     SummarizeSources,
@@ -64,7 +62,6 @@ impl ToolRuntime {
     ) -> Result<Value> {
         match timeout(tool_timeout, async {
             match kind {
-                NativeToolKind::FetchPage => self.fetch_page(arguments).await,
                 NativeToolKind::ExtractSignals => self.extract_signals(arguments),
                 NativeToolKind::MemoryLookup => self.memory_lookup(arguments),
                 NativeToolKind::SummarizeSources => self.summarize_sources(arguments),
@@ -84,41 +81,6 @@ impl ToolRuntime {
                 tool_timeout.as_millis()
             ),
         }
-    }
-
-    pub(super) async fn fetch_page(&self, arguments: Value) -> Result<Value> {
-        let url = required_string_arg(&arguments, "url")?;
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("không thể tải URL `{url}`"))?;
-
-        let status = response.status().as_u16();
-        let final_url = response.url().to_string();
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let body = response
-            .text()
-            .await
-            .context("không thể đọc body từ phản hồi page")?;
-        let title = extract_html_title(&body);
-        let excerpt = truncate_chars(&collapse_whitespace(&strip_html_tags(&body)), 1_200);
-
-        Ok(json!({
-            "ok": status < 400,
-            "requested_url": url,
-            "final_url": final_url,
-            "status": status,
-            "content_type": content_type,
-            "title": title,
-            "excerpt": excerpt,
-        }))
     }
 
     fn extract_signals(&self, arguments: Value) -> Result<Value> {
@@ -332,7 +294,7 @@ impl ToolRuntime {
             "resolved_path": path.display().to_string(),
             "mode": if append { "append" } else { "write" },
             "created": !existed,
-            "bytes_written": content.as_bytes().len(),
+            "bytes_written": content.len(),
             "size_bytes": metadata.len(),
         }))
     }
@@ -464,7 +426,6 @@ impl ToolRuntime {
 
 pub(super) fn native_tool_kind(name: &str) -> Option<NativeToolKind> {
     match name.trim().to_ascii_lowercase().as_str() {
-        "fetch_page" => Some(NativeToolKind::FetchPage),
         "extract_signals" => Some(NativeToolKind::ExtractSignals),
         "memory_lookup" => Some(NativeToolKind::MemoryLookup),
         "summarize_sources" => Some(NativeToolKind::SummarizeSources),
@@ -479,7 +440,6 @@ pub(super) fn native_tool_kind(name: &str) -> Option<NativeToolKind> {
 
 fn native_tool_name(kind: NativeToolKind) -> &'static str {
     match kind {
-        NativeToolKind::FetchPage => "fetch_page",
         NativeToolKind::ExtractSignals => "extract_signals",
         NativeToolKind::MemoryLookup => "memory_lookup",
         NativeToolKind::SummarizeSources => "summarize_sources",
@@ -493,9 +453,6 @@ fn native_tool_name(kind: NativeToolKind) -> &'static str {
 
 pub(super) fn native_tool_description(kind: NativeToolKind) -> &'static str {
     match kind {
-        NativeToolKind::FetchPage => {
-            "Tải một URL và trả về status, final URL, title và excerpt để rà nguồn nhanh."
-        }
         NativeToolKind::ExtractSignals => {
             "Rút bias, timeframe, keywords và các mức giá ứng viên từ raw text kỹ thuật."
         }
@@ -523,17 +480,6 @@ pub(super) fn native_tool_description(kind: NativeToolKind) -> &'static str {
 
 fn native_tool_schema(kind: NativeToolKind) -> Value {
     match kind {
-        NativeToolKind::FetchPage => json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL cần tải"
-                }
-            },
-            "required": ["url"],
-            "additionalProperties": false,
-        }),
         NativeToolKind::ExtractSignals => json!({
             "type": "object",
             "properties": {

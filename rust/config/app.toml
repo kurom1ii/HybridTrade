@@ -27,13 +27,13 @@ max_parallel_sources = 4
 seed_urls = []
 
 [providers.default]
-chat = "openai"
+chat = "anthropic"
 
 [providers.openai]
 enabled = true
 base_url = "http://localhost:4141"
 model = "gpt-5.4"
-request_retries = 2
+request_retries = 3
 retry_backoff_ms = 1500
 max_tokens = 400000
 temperature = 0.2
@@ -42,7 +42,8 @@ temperature = 0.2
 enabled = true
 base_url = "http://localhost:4141"
 model = "claude-opus-4.6"
-request_retries = 2
+light_model = "claude-haiku-4.5"
+request_retries = 3
 retry_backoff_ms = 1500
 max_tokens = 128000
 temperature = 0.2

@@ -2,15 +2,16 @@ use std::{
     collections::{BTreeMap, HashMap},
     env,
     path::PathBuf,
+    sync::Arc,
 };
 
-use reqwest::Client;
 use serde_json::{json, Value};
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::agents::providers::team::TeamOrchestrator;
 use crate::config::{McpServerConfig, NativeToolConfig};
 
-use super::super::models::{ChatTurn, DebugToolCall};
+use super::super::models::{ChatStreamEvent, ChatTurn, DebugToolCall};
 use super::{
     mcp::McpSession,
     native::NativeToolKind,
@@ -21,15 +22,16 @@ use super::{
 };
 
 pub(crate) struct ToolRuntime {
-    pub(super) http_client: Client,
     pub(super) history: Vec<ChatTurn>,
     pub(super) context_preview: Option<String>,
     pub(super) workspace_root: PathBuf,
     pub(super) tools: BTreeMap<String, ToolDefinition>,
-    pub(super) mcp_sessions: HashMap<String, McpSession>,
+    pub(super) mcp_sessions: HashMap<String, Arc<AsyncMutex<McpSession>>>,
     pub(super) initialization_warnings: Vec<String>,
     pub(super) tool_calls: Vec<DebugToolCall>,
     pub(super) team_orchestrator: Option<TeamOrchestrator>,
+    pub(super) stream_sender: Option<mpsc::UnboundedSender<ChatStreamEvent>>,
+    pub(super) stream_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +61,6 @@ impl ToolRuntime {
         native_tools: Vec<NativeToolConfig>,
         history: Vec<ChatTurn>,
         context_preview: Option<String>,
-        http_client: Client,
     ) -> Self {
         let (workspace_root, workspace_warning) = match resolve_workspace_root() {
             Ok(path) => (path, None),
@@ -77,7 +78,6 @@ impl ToolRuntime {
         };
 
         let mut runtime = Self {
-            http_client,
             history,
             context_preview,
             workspace_root,
@@ -86,6 +86,8 @@ impl ToolRuntime {
             initialization_warnings: Vec::new(),
             tool_calls: Vec::new(),
             team_orchestrator: None,
+            stream_sender: None,
+            stream_label: None,
         };
 
         if let Some(warning) = workspace_warning {
@@ -119,6 +121,14 @@ impl ToolRuntime {
         &self.tool_calls
     }
 
+    pub(crate) fn history(&self) -> &[ChatTurn] {
+        &self.history
+    }
+
+    pub(crate) fn set_history(&mut self, history: Vec<ChatTurn>) {
+        self.history = history;
+    }
+
     pub(crate) fn prepare_turn(&mut self, history: &[ChatTurn], context_preview: Option<String>) {
         self.history = history.to_vec();
         self.context_preview = context_preview;
@@ -128,6 +138,21 @@ impl ToolRuntime {
 
     pub(crate) fn attach_team_orchestrator(&mut self, team_orchestrator: TeamOrchestrator) {
         self.team_orchestrator = Some(team_orchestrator);
+    }
+
+    pub(crate) fn set_stream(
+        &mut self,
+        sender: mpsc::UnboundedSender<ChatStreamEvent>,
+        label: String,
+    ) {
+        self.stream_sender = Some(sender);
+        self.stream_label = Some(label);
+    }
+
+    pub(crate) fn clear_stream_state(&mut self) {
+        self.team_orchestrator = None;
+        self.stream_sender = None;
+        self.stream_label = None;
     }
 
     pub(crate) async fn execute(&mut self, name: &str, arguments: Value) -> String {
@@ -146,6 +171,14 @@ impl ToolRuntime {
                 input: arguments,
                 output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
             });
+            if let Some(tx) = &self.stream_sender {
+                let _ = tx.send(ChatStreamEvent::TeamToolCall {
+                    member: self.stream_label.clone().unwrap_or_default(),
+                    tool: name.to_string(),
+                    status: "failed".to_string(),
+                    output_preview: truncate_chars(&output_text, 200),
+                });
+            }
             return output_text;
         };
 
@@ -162,12 +195,20 @@ impl ToolRuntime {
                     "completed"
                 };
                 self.tool_calls.push(DebugToolCall {
-                    name: definition.name,
-                    source: definition.source_label,
+                    name: definition.name.clone(),
+                    source: definition.source_label.clone(),
                     status: status.to_string(),
                     input: arguments,
                     output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
                 });
+                if let Some(tx) = &self.stream_sender {
+                    let _ = tx.send(ChatStreamEvent::TeamToolCall {
+                        member: self.stream_label.clone().unwrap_or_default(),
+                        tool: definition.name.clone(),
+                        status: status.to_string(),
+                        output_preview: truncate_chars(&output_text, 200),
+                    });
+                }
                 output_text
             }
             Err(error) => {
@@ -177,12 +218,20 @@ impl ToolRuntime {
                 });
                 let output_text = render_tool_output_for_model(&output);
                 self.tool_calls.push(DebugToolCall {
-                    name: definition.name,
-                    source: definition.source_label,
+                    name: definition.name.clone(),
+                    source: definition.source_label.clone(),
                     status: "failed".to_string(),
                     input: arguments,
                     output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
                 });
+                if let Some(tx) = &self.stream_sender {
+                    let _ = tx.send(ChatStreamEvent::TeamToolCall {
+                        member: self.stream_label.clone().unwrap_or_default(),
+                        tool: definition.name.clone(),
+                        status: "failed".to_string(),
+                        output_preview: truncate_chars(&output_text, 200),
+                    });
+                }
                 output_text
             }
         }
@@ -227,7 +276,6 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::Client;
     use serde_json::json;
     use std::{
         fs as std_fs,
@@ -249,7 +297,6 @@ mod tests {
 
     fn test_runtime(workspace_root: PathBuf) -> ToolRuntime {
         ToolRuntime {
-            http_client: Client::new(),
             history: Vec::new(),
             context_preview: None,
             workspace_root,
@@ -258,6 +305,8 @@ mod tests {
             initialization_warnings: Vec::new(),
             tool_calls: Vec::new(),
             team_orchestrator: None,
+            stream_sender: None,
+            stream_label: None,
         }
     }
 

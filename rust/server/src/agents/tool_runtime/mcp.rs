@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use mcp_client::{
@@ -6,6 +6,7 @@ use mcp_client::{
     Transport,
 };
 use serde_json::{json, Value};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::config::McpServerConfig;
 
@@ -49,7 +50,7 @@ impl ToolRuntime {
                         });
                     }
 
-                    self.mcp_sessions.insert(server_name.clone(), session);
+                    self.mcp_sessions.insert(server_name.clone(), Arc::new(AsyncMutex::new(session)));
                 }
                 Err(error) => {
                     self.initialization_warnings.push(format!(
@@ -73,10 +74,11 @@ impl ToolRuntime {
         tool_name: &str,
         arguments: Value,
     ) -> Result<Value> {
-        let session = self
+        let arc = self
             .mcp_sessions
             .get(server_name)
             .ok_or_else(|| anyhow!("MCP server `{server_name}` chưa sẵn sàng"))?;
+        let session = arc.lock().await;
         session.call_tool(tool_name, arguments).await
     }
 }

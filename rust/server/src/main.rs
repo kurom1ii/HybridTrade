@@ -44,8 +44,14 @@ async fn main() -> anyhow::Result<()> {
     let config = Arc::new(ConfigBundle::load(&config_dir)?);
     let skills_dir = resolve_skills_dir(&config_dir);
     let skills = SkillRegistry::load(&skills_dir)?;
+    let loaded_commands = skills.available_commands();
 
-    info!(skills_dir = %skills_dir.display(), "loaded agent skills");
+    info!(
+        skills_dir = %skills_dir.display(),
+        command_count = loaded_commands.len(),
+        commands = %loaded_commands.join(", "),
+        "loaded agent command skills"
+    );
 
     let database_path = PathBuf::from(&config.database.path);
     if let Some(parent) = database_path.parent() {

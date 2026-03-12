@@ -32,7 +32,6 @@ impl ConfigBundle {
             orchestration: app.orchestration,
             providers: app.providers,
             tooling: ToolingConfig {
-                skill_tools: mcp.skill_tools,
                 mcp_servers: mcp.mcp_servers,
                 native_tools: tools.tools,
             },
@@ -95,7 +94,6 @@ pub struct ProvidersConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct ToolingConfig {
-    pub skill_tools: Vec<String>,
     pub mcp_servers: Vec<McpServerConfig>,
     pub native_tools: Vec<NativeToolConfig>,
 }
@@ -123,6 +121,8 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub model: String,
     #[serde(default)]
+    pub light_model: String,
+    #[serde(default)]
     pub api_key_env: String,
     #[serde(default = "default_request_retries")]
     pub request_retries: usize,
@@ -144,8 +144,6 @@ pub struct ProviderConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct McpFile {
-    #[serde(default)]
-    skill_tools: Vec<String>,
     #[serde(default)]
     mcp_servers: Vec<McpServerConfig>,
 }
@@ -180,12 +178,24 @@ pub struct NativeToolConfig {
     pub timeout_ms: u64,
 }
 
+impl ProviderConfig {
+    pub fn light_config(&self) -> Option<ProviderConfig> {
+        if self.light_model.trim().is_empty() {
+            return None;
+        }
+        let mut config = self.clone();
+        config.model = self.light_model.clone();
+        Some(config)
+    }
+}
+
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             base_url: String::new(),
             model: String::new(),
+            light_model: String::new(),
             api_key_env: String::new(),
             request_retries: default_request_retries(),
             retry_backoff_ms: default_retry_backoff_ms(),
@@ -236,15 +246,15 @@ fn read_optional_toml<T: for<'de> Deserialize<'de>>(path: impl AsRef<Path>) -> R
 }
 
 fn default_chat_provider() -> String {
-    "openai".to_string()
+    "anthropic".to_string()
 }
 
 fn default_max_tokens() -> u32 {
-    1200
+    400000
 }
 
 fn default_request_retries() -> usize {
-    2
+    3
 }
 
 fn default_retry_backoff_ms() -> u64 {
