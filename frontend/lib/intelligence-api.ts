@@ -1,8 +1,12 @@
 import {
   CreateSchedulePayload,
+  UpdateSchedulePayload,
   DashboardResponse,
   ScheduleView,
   AgentStatusView,
+  InstrumentView,
+  UpsertInstrumentPayload,
+  CapabilitiesView,
 } from "@/lib/intelligence-types";
 
 const rawBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8080";
@@ -55,6 +59,41 @@ export function fetchSchedules(): Promise<ScheduleView[]> {
 export function createSchedule(payload: CreateSchedulePayload): Promise<ScheduleView> {
   return apiFetch<ScheduleView>("/api/schedules", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSchedule(id: string, payload: UpdateSchedulePayload): Promise<ScheduleView> {
+  return apiFetch<ScheduleView>(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteSchedule(id: string): Promise<void> {
+  return apiFetch<void>(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function fetchCapabilities(): Promise<CapabilitiesView> {
+  return apiFetch<CapabilitiesView>("/api/capabilities");
+}
+
+export function fetchInstruments(): Promise<InstrumentView[]> {
+  return apiFetch<InstrumentView[]>("/api/instruments");
+}
+
+export function fetchInstrument(symbol: string): Promise<InstrumentView> {
+  return apiFetch<InstrumentView>(`/api/instruments/${encodeURIComponent(symbol)}`);
+}
+
+export function upsertInstrument(
+  symbol: string,
+  payload: UpsertInstrumentPayload,
+): Promise<InstrumentView> {
+  return apiFetch<InstrumentView>(`/api/instruments/${encodeURIComponent(symbol)}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }

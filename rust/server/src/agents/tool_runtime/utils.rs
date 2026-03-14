@@ -159,68 +159,6 @@ pub(super) fn truncate_chars(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect::<String>() + "..."
 }
 
-pub(super) fn count_keyword_hits(haystack: &str, keywords: &[&str]) -> usize {
-    keywords
-        .iter()
-        .filter(|keyword| haystack.contains(**keyword))
-        .count()
-}
-
-pub(super) fn find_timeframes(lowered: &str) -> Vec<&'static str> {
-    ["1m", "5m", "15m", "1h", "4h", "1d", "1w", "daily", "weekly"]
-        .into_iter()
-        .filter(|timeframe| lowered.contains(timeframe))
-        .collect()
-}
-
-pub(super) fn collect_keywords(lowered: &str) -> Vec<&'static str> {
-    [
-        "support",
-        "resistance",
-        "breakout",
-        "breakdown",
-        "volume",
-        "trend",
-        "range",
-        "retest",
-    ]
-    .into_iter()
-    .filter(|keyword| lowered.contains(keyword))
-    .collect()
-}
-
-pub(super) fn extract_candidate_numbers(text: &str) -> Vec<String> {
-    let mut current = String::new();
-    let mut values = Vec::new();
-
-    for ch in text.chars() {
-        if ch.is_ascii_digit() || matches!(ch, '.' | ',' | '/') {
-            current.push(ch);
-        } else {
-            push_number_candidate(&mut values, &mut current);
-        }
-    }
-    push_number_candidate(&mut values, &mut current);
-
-    values
-}
-
-fn push_number_candidate(values: &mut Vec<String>, current: &mut String) {
-    let candidate = current.trim_matches(|ch: char| ch == '.' || ch == ',' || ch == '/');
-    if candidate.chars().filter(|ch| ch.is_ascii_digit()).count() >= 3
-        && !values.iter().any(|value| value == candidate)
-    {
-        values.push(candidate.to_string());
-    }
-    current.clear();
-}
-
-pub(super) fn extract_domain(value: &str) -> Option<String> {
-    reqwest::Url::parse(value)
-        .ok()
-        .and_then(|url| url.domain().map(str::to_string))
-}
-
 pub(super) fn resolve_workspace_root() -> Result<PathBuf> {
     let base = env::var("HYBRIDTRADE_TOOL_ROOT")
         .ok()

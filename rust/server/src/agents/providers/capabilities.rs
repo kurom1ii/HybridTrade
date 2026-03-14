@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::config::{McpServerConfig, NativeToolConfig, ToolingConfig};
+use crate::models::ToolFilter;
 
 use super::super::{
     models::{AgentRole, ChatTurn, DebugMcpServerView, DebugToolView},
@@ -192,6 +193,86 @@ impl CapabilityCatalog {
             markdown,
         });
     }
+
+    /// Build a tool runtime with filtered native tools and MCP servers.
+    pub(super) async fn tool_runtime_for_filtered(
+        &self,
+        history: &[ChatTurn],
+        context_preview: Option<String>,
+        filter: &ToolFilter,
+    ) -> ToolRuntime {
+        let mcp_servers = filter_mcp_servers(&self.mcp_servers, &filter.allowed_mcps);
+        let native_tools = filter_native_tools(&self.native_tools, &filter.allowed_tools);
+        ToolRuntime::bootstrap(mcp_servers, native_tools, history.to_vec(), context_preview).await
+    }
+
+    /// Merge schedule-specified skills into the turn context.
+    pub(super) fn merge_schedule_skills(
+        &self,
+        mut ctx: TurnSkillContext,
+        skill_names: &[String],
+    ) -> TurnSkillContext {
+        let mut seen: HashSet<String> = ctx
+            .active_skills
+            .iter()
+            .map(|s| s.name.trim().to_ascii_lowercase())
+            .collect();
+
+        for name in skill_names {
+            self.push_active_skill(name, &mut seen, &mut ctx.active_skills);
+        }
+        ctx
+    }
+
+    pub fn all_native_tool_names(&self) -> Vec<String> {
+        self.native_tools.iter().map(|t| t.name.clone()).collect()
+    }
+
+    pub fn all_mcp_server_names(&self) -> Vec<String> {
+        self.mcp_servers.iter().map(|s| s.name.clone()).collect()
+    }
+
+    pub fn all_skill_names(&self) -> Vec<String> {
+        self.skills.available_commands()
+    }
+}
+
+fn filter_mcp_servers(
+    servers: &[McpServerConfig],
+    allowed: &Option<Vec<String>>,
+) -> Vec<McpServerConfig> {
+    match allowed {
+        None => servers.to_vec(),
+        Some(names) if names.is_empty() => vec![],
+        Some(names) => {
+            let lower: HashSet<String> =
+                names.iter().map(|n| n.trim().to_ascii_lowercase()).collect();
+            servers
+                .iter()
+                .filter(|s| lower.contains(&s.name.trim().to_ascii_lowercase()))
+                .cloned()
+                .collect()
+        }
+    }
+}
+
+fn filter_native_tools(
+    tools: &[NativeToolConfig],
+    allowed: &Option<Vec<String>>,
+) -> Vec<NativeToolConfig> {
+    match allowed {
+        None => tools.to_vec(),
+        Some(names) if names.is_empty() => vec![],
+        Some(names) => {
+            let lower: HashSet<String> =
+                names.iter().map(|n| n.trim().to_ascii_lowercase()).collect();
+            tools
+                .iter()
+                .filter(|t| lower.contains(&t.name.trim().to_ascii_lowercase()))
+                .cloned()
+                .collect()
+        }
+    }
 }
 
 fn describe_mcp_server(server: &McpServerConfig) -> String {
@@ -214,6 +295,10 @@ fn describe_native_tool(tool: &NativeToolConfig) -> String {
         "bash" => "Chạy lệnh bash trong workspace backend với timeout cấu hình".to_string(),
         "spawn_team" => {
             "Spawn team subagent động để trao đổi nội bộ rồi báo cáo lại cho Kuromi".to_string()
+        }
+        "reusable_skills" => {
+            "Quản lý site-specific skills tự học: save/load/list/delete/match website selectors và workflows"
+                .to_string()
         }
         _ => format!("Native tool {}", tool.name),
     }

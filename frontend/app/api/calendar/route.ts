@@ -77,7 +77,14 @@ interface MergeItem {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get("date"); // YYYY-MM-DD or empty for today
-  const importance = searchParams.get("importance") || ""; // 1, 2, or 3
+  const importanceRaw = searchParams.get("importance") || "";
+
+  // Map human-readable importance (from agent tool) to FastBull star levels
+  const importanceMap: Record<string, string> = {
+    high: "3", medium: "2", low: "1",
+    "3": "3", "2": "2", "1": "1",
+  };
+  const importance = importanceMap[importanceRaw.toLowerCase()] || importanceRaw;
 
   // Calculate start/end timestamps for the day (UTC+7)
   const targetDate = dateParam ? new Date(dateParam + "T00:00:00+07:00") : new Date();

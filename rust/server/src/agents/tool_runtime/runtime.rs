@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use futures_util::future::join_all;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::agents::providers::team::TeamOrchestrator;
@@ -248,6 +249,122 @@ impl ToolRuntime {
         }
     }
 
+    /// Execute multiple tool calls concurrently (inspired by rig's buffer_unordered pattern).
+    ///
+    /// - Single call → delegates to sequential `execute` (no overhead)
+    /// - Multiple calls → runs tool executions in parallel via `join_all`,
+    ///   then records results sequentially for debug/stream ordering.
+    pub(crate) async fn execute_concurrent(
+        &mut self,
+        calls: Vec<(String, Value)>,
+    ) -> Vec<String> {
+        // For 0 or 1 calls, use the regular sequential path
+        if calls.len() <= 1 {
+            let mut results = Vec::new();
+            for (name, args) in calls {
+                results.push(self.execute(&name, args).await);
+            }
+            return results;
+        }
+
+        let is_team_context = self.stream_label.is_some();
+
+        // Phase 1: Prepare all calls — sanitize, emit pre-events, resolve definitions
+        let prepared: Vec<(String, Value, Option<ToolDefinition>)> = calls
+            .into_iter()
+            .map(|(name, arguments)| {
+                let arguments = sanitize_tool_arguments(arguments);
+
+                // Emit pre-execution event for each tool
+                if !is_team_context {
+                    if let Some(tx) = &self.stream_sender {
+                        let input_preview = truncate_chars(
+                            &serde_json::to_string(&arguments).unwrap_or_default(),
+                            200,
+                        );
+                        let _ = tx.send(ChatStreamEvent::AgentToolCall {
+                            tool: name.clone(),
+                            input_preview,
+                        });
+                    }
+                }
+
+                let definition = self.tools.get(&name).cloned();
+                (name, arguments, definition)
+            })
+            .collect();
+
+        // Phase 2: Execute all tools concurrently
+        // Reborrow &mut self as &self — mutable access is suspended until join_all completes.
+        let raw_results: Vec<anyhow::Result<Value>> = {
+            let self_ref = &*self;
+            let futures_vec: Vec<_> = prepared
+                .iter()
+                .map(|(name, arguments, definition)| {
+                    let arguments = arguments.clone();
+                    let name = name.clone();
+                    let executor = definition.as_ref().map(|d| d.executor.clone());
+                    async move {
+                        match executor {
+                            Some(exec) => self_ref.execute_inner(&exec, arguments).await,
+                            None => Ok(json!({
+                                "ok": false,
+                                "error": format!(
+                                    "tool `{name}` không tồn tại trong runtime hiện tại"
+                                ),
+                            })),
+                        }
+                    }
+                })
+                .collect();
+            join_all(futures_vec).await
+        };
+        // self_ref dropped — &mut self is usable again
+
+        // Phase 3: Record results sequentially for correct debug ordering
+        let mut outputs = Vec::with_capacity(prepared.len());
+        for ((name, arguments, definition), result) in
+            prepared.into_iter().zip(raw_results.into_iter())
+        {
+            let (output_text, status) = match result {
+                Ok(output) => {
+                    let text = render_tool_output_for_model(&output);
+                    let status = if tool_output_is_error(&output) {
+                        "failed"
+                    } else {
+                        "completed"
+                    };
+                    (text, status)
+                }
+                Err(error) => {
+                    let output = json!({ "ok": false, "error": error.to_string() });
+                    (render_tool_output_for_model(&output), "failed")
+                }
+            };
+
+            let source = definition
+                .as_ref()
+                .map(|d| d.source_label.clone())
+                .unwrap_or_else(|| "runtime".to_string());
+            let def_name = definition
+                .as_ref()
+                .map(|d| d.name.clone())
+                .unwrap_or(name);
+
+            self.tool_calls.push(DebugToolCall {
+                name: def_name.clone(),
+                source,
+                status: status.to_string(),
+                input: arguments,
+                output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
+            });
+            self.emit_tool_result_event(is_team_context, &def_name, status, &output_text);
+            outputs.push(output_text);
+        }
+
+        outputs
+    }
+
     fn emit_tool_result_event(
         &self,
         is_team_context: bool,
@@ -291,7 +408,7 @@ impl ToolRuntime {
     }
 
     async fn execute_inner(
-        &mut self,
+        &self,
         executor: &ToolExecutor,
         arguments: Value,
     ) -> anyhow::Result<Value> {
@@ -353,14 +470,16 @@ mod tests {
         std_fs::write(root.join("notes.txt"), "line-1\nline-2\nline-3\n").unwrap();
         let runtime = test_runtime(root.clone());
 
-        let result = runtime
-            .read_path(json!({
+        let result = crate::agents::tool_runtime::tools::read::execute(
+            &runtime,
+            json!({
                 "path": "notes.txt",
                 "start_line": 2,
                 "line_count": 2,
-            }))
-            .await
-            .unwrap();
+            }),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result["content"], "line-2\nline-3");
         assert_eq!(result["start_line"], 2);
@@ -374,13 +493,15 @@ mod tests {
         let root = temp_dir("write");
         let runtime = test_runtime(root.clone());
 
-        let error = runtime
-            .write_path(json!({
+        let error = crate::agents::tool_runtime::tools::write::execute(
+            &runtime,
+            json!({
                 "path": "../escape.txt",
                 "content": "boom",
-            }))
-            .await
-            .unwrap_err();
+            }),
+        )
+        .await
+        .unwrap_err();
 
         assert!(error.to_string().contains("nằm ngoài workspace"));
 
@@ -392,15 +513,15 @@ mod tests {
         let root = temp_dir("exec");
         let runtime = test_runtime(root.clone());
 
-        let result = runtime
-            .exec_command(
-                json!({
-                    "command": "pwd",
-                }),
-                Duration::from_secs(2),
-            )
-            .await
-            .unwrap();
+        let result = crate::agents::tool_runtime::tools::exec::execute(
+            &runtime,
+            json!({
+                "command": "pwd",
+            }),
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
 
         let stdout = result["stdout"].as_str().unwrap();
         assert!(stdout.contains(&root.display().to_string()));

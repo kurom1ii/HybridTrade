@@ -15,6 +15,10 @@ import {
 } from "@/components/ui/chart";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, LabelList } from "recharts";
 import { useNews } from "@/hooks/useNews";
+import { usePollingResource } from "@/hooks/use-polling-resource";
+import { usePrices } from "@/hooks/usePrices";
+import { fetchInstruments } from "@/lib/intelligence-api";
+import type { InstrumentView } from "@/lib/intelligence-types";
 
 type Category = "ALL" | "COMMODITIES" | "FOREX" | "INDICES" | "CRYPTO";
 
@@ -36,7 +40,43 @@ interface Instrument {
   keyLevels: string[];
 }
 
-const instruments: Instrument[] = [
+function apiToInstrument(iv: InstrumentView): Instrument {
+  const dir = iv.direction.toLowerCase();
+  const direction: Instrument["direction"] =
+    dir === "bullish" ? "BUY" : dir === "bearish" ? "SELL" : "NEUTRAL";
+  const type: "profit" | "loss" = iv.change_pct >= 0 ? "profit" : "loss";
+  const cat = iv.category.toUpperCase() as Category;
+  const category: Category = ["COMMODITIES", "FOREX", "INDICES", "CRYPTO"].includes(cat)
+    ? cat
+    : "FOREX";
+  const keyLevels = Array.isArray(iv.key_levels)
+    ? iv.key_levels.map((kl) =>
+        typeof kl === "object" && kl !== null
+          ? `${kl.label ?? ""} ${kl.price ?? ""}`.trim()
+          : String(kl)
+      )
+    : [];
+
+  return {
+    symbol: iv.symbol,
+    name: iv.name || iv.symbol,
+    price: iv.price.toLocaleString("en-US", { minimumFractionDigits: 2 }),
+    change: `${iv.change_pct >= 0 ? "+" : ""}${iv.change_pct.toFixed(2)}%`,
+    type,
+    category,
+    confidence: iv.confidence,
+    direction,
+    summary: iv.analysis || "Chưa có phân tích từ agent.",
+    entry: "-",
+    tp: "-",
+    sl: "-",
+    session: iv.timeframe || "-",
+    timeframe: iv.timeframe || "-",
+    keyLevels,
+  };
+}
+
+const fallbackInstruments: Instrument[] = [
   {
     symbol: "XAU/USD", name: "Gold", price: "2,178.40", change: "+0.89%", type: "profit",
     category: "COMMODITIES", confidence: 87, direction: "BUY",
@@ -123,9 +163,19 @@ const flowChartConfig: ChartConfig = Object.fromEntries(
   flowSymbols.map((sym) => [sym, { label: sym, color: flowColors[sym] }])
 );
 
-// Watchlist data (from design)
-const watchlist = [
-  { symbol: "XAU/USD", price: "2,178.40", change: "+0.89%", type: "profit" as const, tag: "METAL" },
+// Watchlist symbols
+const watchlistSymbols = [
+  { symbol: "XAUUSD", display: "XAU/USD", tag: "METAL" },
+  { symbol: "XAGUSD", display: "XAG/USD", tag: "METAL" },
+  { symbol: "EURUSD", display: "EUR/USD", tag: "FX" },
+  { symbol: "GBPJPY", display: "GBP/JPY", tag: "FX" },
+  { symbol: "USNDAQ100", display: "NASDAQ", tag: "INDEX" },
+  { symbol: "US30", display: "US30", tag: "INDEX" },
+  { symbol: "US500", display: "US500", tag: "INDEX" },
+  { symbol: "UK100", display: "UK100", tag: "INDEX" },
+  { symbol: "BTCUSDT", display: "BTC/USDT", tag: "CRYPTO" },
+  { symbol: "WTI", display: "WTI Oil", tag: "ENERGY" },
+  { symbol: "BRENT", display: "Brent Oil", tag: "ENERGY" },
 ];
 
 
@@ -389,8 +439,36 @@ function formatExactTime(ms: number): string {
   return d.toLocaleTimeString("vi-VN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function formatFullDate(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
 function RightPanel() {
-  const { items: liveNews, loading, error, lastUpdated, connected, loadMore, loadingMore, hasMore } = useNews({ pageSize: 15, pollInterval: 60_000 });
+  const { items: liveNews, loading, error, lastUpdated, connected, loadMore, loadingMore, hasMore } = useNews({ pageSize: 15 });
+  const { prices: livePrices } = usePrices({
+    symbols: watchlistSymbols.map((w) => w.symbol),
+  });
+
+  const watchlist = watchlistSymbols.map((w) => {
+    const p = livePrices.find((x) => x.symbol === w.symbol);
+    const pctStr = p
+      ? `${p.changePct >= 0 ? "+" : ""}${(p.changePct * 100).toFixed(2)}%`
+      : "—";
+    const priceStr = p
+      ? p.price.toLocaleString("en-US", {
+          minimumFractionDigits: Math.min(p.precision, 2),
+          maximumFractionDigits: p.precision,
+        })
+      : "—";
+    return {
+      symbol: w.display,
+      price: priceStr,
+      change: pctStr,
+      type: (p ? (p.changePct >= 0 ? "profit" : "loss") : "profit") as "profit" | "loss",
+      tag: w.tag,
+    };
+  });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -531,6 +609,8 @@ function RightPanel() {
                   <span className="text-[10px] text-text-faint">
                     <span className="text-text-muted">{formatExactTime(news.releasedDateMs)}</span>
                     {" · "}
+                    {formatFullDate(news.releasedDateMs)}
+                    {" · "}
                     {formatNewsTime(news.releasedDateMs)}
                   </span>
                   {news.important && (
@@ -564,6 +644,91 @@ function RightPanel() {
 
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<Category>("ALL");
+
+  const { data: apiInstruments } = usePollingResource(
+    "instruments",
+    fetchInstruments,
+    { intervalMs: 0 },
+  );
+
+  const DASHBOARD_SYMBOLS = [
+    "XAUUSD", "XAGUSD",
+    "EURUSD", "GBPJPY",
+    "USNDAQ100", "US30", "US500", "UK100",
+    "BTCUSDT",
+    "WTI", "BRENT",
+  ];
+
+  const SYMBOL_NAMES: Record<string, [string, Category, string]> = {
+    XAUUSD: ["Gold / US Dollar", "COMMODITIES", "XAU/USD"],
+    XAGUSD: ["Silver / US Dollar", "COMMODITIES", "XAG/USD"],
+    EURUSD: ["Euro / US Dollar", "FOREX", "EUR/USD"],
+    GBPJPY: ["Pound Sterling / Japanese Yen", "FOREX", "GBP/JPY"],
+    USNDAQ100: ["US 100 Tech Index", "INDICES", "NASDAQ"],
+    US30: ["Dow Jones Industrial", "INDICES", "US30"],
+    US500: ["S&P 500 Index", "INDICES", "US500"],
+    UK100: ["UK FTSE 100", "INDICES", "UK100"],
+    BTCUSDT: ["Bitcoin / Tether", "CRYPTO", "BTC/USDT"],
+    WTI: ["WTI Crude Oil", "COMMODITIES", "WTI"],
+    BRENT: ["Brent Crude Oil", "COMMODITIES", "BRENT"],
+  };
+
+  const { prices: livePrices } = usePrices({
+    symbols: DASHBOARD_SYMBOLS,
+  });
+
+  const instruments: Instrument[] = useMemo(() => {
+    // Build a map of backend instruments keyed by normalized symbol
+    const apiMap = new Map<string, InstrumentView>();
+    if (apiInstruments) {
+      for (const iv of apiInstruments) {
+        apiMap.set(iv.symbol.replace("/", "").replace("-", "").toUpperCase(), iv);
+      }
+    }
+
+    // Build a map of live prices keyed by symbol
+    const priceMap = new Map(livePrices.map((p) => [p.symbol, p]));
+
+    // Merge: for each dashboard symbol, use backend analysis if available, overlay live price
+    return DASHBOARD_SYMBOLS.map((sym) => {
+      const apiData = apiMap.get(sym);
+      const livePrice = priceMap.get(sym);
+      const [defaultName, defaultCategory, displaySymbol] = SYMBOL_NAMES[sym] || [sym, "FOREX" as Category, sym];
+
+      // Start with backend data or defaults
+      let inst: Instrument;
+      if (apiData) {
+        inst = apiToInstrument(apiData);
+      } else {
+        inst = {
+          symbol: displaySymbol,
+          name: defaultName,
+          price: "—",
+          change: "—",
+          type: "profit",
+          category: defaultCategory,
+          confidence: 0,
+          direction: "NEUTRAL",
+          summary: "Đang chờ phân tích từ agent AI.",
+          entry: "-", tp: "-", sl: "-",
+          session: "-", timeframe: "-",
+          keyLevels: [],
+        };
+      }
+
+      // Overlay live price if available
+      if (livePrice) {
+        inst.price = livePrice.price.toLocaleString("en-US", {
+          minimumFractionDigits: Math.min(livePrice.precision, 2),
+          maximumFractionDigits: livePrice.precision,
+        });
+        inst.change = `${livePrice.changePct >= 0 ? "+" : ""}${(livePrice.changePct * 100).toFixed(2)}%`;
+        inst.type = livePrice.changePct >= 0 ? "profit" : "loss";
+      }
+
+      return inst;
+    });
+  }, [apiInstruments, livePrices]);
 
   const filtered = activeTab === "ALL"
     ? instruments
@@ -653,7 +818,7 @@ export default function DashboardPage() {
                       inst.type === "profit" ? "text-profit" : "text-loss"
                     )}
                   >
-                    {inst.type === "profit" ? "+" : ""}{inst.change}
+                    {inst.change}
                   </div>
                 </div>
               </div>

@@ -19,6 +19,7 @@ pub enum ChatStreamEvent {
         output_preview: String,
     },
     TeamStarted {
+        session_id: String,
         mission: String,
         members: Vec<String>,
     },
@@ -26,6 +27,12 @@ pub enum ChatStreamEvent {
         round: usize,
         total: usize,
         phase: String,
+    },
+    TeamDirective {
+        session_id: String,
+        seq: usize,
+        to: String,
+        content_preview: String,
     },
     TeamToolCall {
         member: String,

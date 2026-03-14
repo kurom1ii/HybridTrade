@@ -143,8 +143,6 @@ pub struct ProviderConfig {
     pub compact_keep_recent_turns: usize,
     #[serde(default = "default_thinking")]
     pub thinking: bool,
-    #[serde(default = "default_thinking_budget_tokens")]
-    pub thinking_budget_tokens: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -211,7 +209,6 @@ impl Default for ProviderConfig {
             compact_summary_chars: default_compact_summary_chars(),
             compact_keep_recent_turns: default_compact_keep_recent_turns(),
             thinking: default_thinking(),
-            thinking_budget_tokens: default_thinking_budget_tokens(),
         }
     }
 }
@@ -298,8 +295,4 @@ fn default_compact_keep_recent_turns() -> usize {
 
 fn default_thinking() -> bool {
     true
-}
-
-fn default_thinking_budget_tokens() -> u32 {
-    32_000
 }

@@ -31,7 +31,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dashboard", get(dashboard))
         .route("/api/agents/status", get(agent_status))
         .route("/api/schedules", get(list_schedules).post(create_schedule))
-        .route("/api/schedules/:id", patch(update_schedule))
+        .route("/api/schedules/:id", patch(update_schedule).delete(delete_schedule))
+        .route("/api/instruments", get(list_instruments))
+        .route("/api/instruments/:symbol", get(get_instrument).put(upsert_instrument))
+        .route("/api/capabilities", get(get_capabilities))
         .route("/api/debug/providers", get(debug_providers))
         .route("/api/debug/agents", get(debug_agents))
         .route("/api/debug/agents/:role/chat", post(debug_agent_chat))
@@ -114,10 +117,29 @@ async fn update_schedule(
     Ok(Json(db::to_schedule_view(row)))
 }
 
+async fn delete_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    ensure_schedule(&state, &id).await?;
+    db::delete_schedule(&state.db, &id).await?;
+    state.events.publish(
+        "job.status",
+        &json!({ "schedule_id": id, "status": "deleted" }),
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn debug_providers(
     State(state): State<Arc<AppState>>,
 ) -> AppResult<Json<Vec<ProviderStatusView>>> {
     Ok(Json(state.providers.provider_statuses()))
+}
+
+async fn get_capabilities(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<crate::models::CapabilitiesView>> {
+    Ok(Json(state.providers.all_capabilities()))
 }
 
 async fn debug_agents(State(state): State<Arc<AppState>>) -> AppResult<Json<Vec<DebugAgentView>>> {
@@ -185,6 +207,7 @@ async fn debug_agent_chat(
                     max_tokens: request.max_tokens,
                     temperature: request.temperature,
                     context,
+                    tool_filter: None,
                 },
                 Some(tx.clone()),
             )
@@ -205,6 +228,43 @@ async fn debug_agent_chat(
         Ok(Event::default().data(serde_json::to_string(&event).unwrap_or_default()))
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+// ─── Instruments ─────────────────────────────────────────────────────
+
+async fn list_instruments(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<Vec<crate::models::InstrumentView>>> {
+    let items = db::list_instruments(&state.db)
+        .await?
+        .into_iter()
+        .map(db::to_instrument_view)
+        .collect();
+    Ok(Json(items))
+}
+
+async fn get_instrument(
+    State(state): State<Arc<AppState>>,
+    Path(symbol): Path<String>,
+) -> AppResult<Json<crate::models::InstrumentView>> {
+    let row = db::get_instrument(&state.db, &symbol)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("instrument {symbol} not found")))?;
+    Ok(Json(db::to_instrument_view(row)))
+}
+
+async fn upsert_instrument(
+    State(state): State<Arc<AppState>>,
+    Path(symbol): Path<String>,
+    Json(request): Json<crate::models::UpsertInstrumentRequest>,
+) -> AppResult<Json<crate::models::InstrumentView>> {
+    let row = db::upsert_instrument(&state.db, &symbol, &request).await?;
+    let view = db::to_instrument_view(row);
+    state.events.publish(
+        "instrument.updated",
+        &json!({ "symbol": symbol }),
+    );
+    Ok(Json(view))
 }
 
 async fn ensure_schedule(state: &AppState, schedule_id: &str) -> AppResult<()> {

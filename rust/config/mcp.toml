@@ -3,4 +3,4 @@ name = "chrome-devtools"
 enabled = true
 timeout_ms = 120000
 command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
+args = ["-y", "chrome-devtools-mcp@latest","--isolated"]

@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::models::{ChatTurn, DebugToolCall};
+use crate::agents::models::ChatTurn;
 
 const DEFAULT_TEAM_ROUNDS: usize = 3;
 const MAX_TEAM_ROUNDS: usize = 6;
@@ -33,11 +33,12 @@ pub(crate) struct SpawnTeamResult {
     pub(crate) ok: bool,
     pub(crate) mission: String,
     pub(crate) briefing: Option<String>,
-    pub(crate) rounds_completed: usize,
+    pub(crate) session_id: String,
+    pub(crate) log_path: String,
+    pub(crate) exchanges_completed: usize,
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) members: Vec<SpawnTeamMemberView>,
-    pub(crate) transcript: Vec<SpawnTeamTranscriptEntry>,
     pub(crate) reports: Vec<SpawnTeamReport>,
     pub(crate) kuromi_brief: String,
 }
@@ -47,16 +48,6 @@ pub(crate) struct SpawnTeamMemberView {
     pub(crate) name: String,
     pub(crate) responsibility: String,
     pub(crate) instructions: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct SpawnTeamTranscriptEntry {
-    pub(crate) round: usize,
-    pub(crate) speaker: String,
-    pub(crate) responsibility: String,
-    pub(crate) content: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) tool_calls: Vec<DebugToolCall>,
 }
 
 #[derive(Debug, Clone, Serialize)]

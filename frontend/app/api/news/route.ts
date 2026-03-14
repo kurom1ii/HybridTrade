@@ -27,10 +27,15 @@ export async function GET(request: Request) {
   const pageSize = searchParams.get("pageSize") || "30";
   const before = searchParams.get("before") || "";
 
+  // Support checkImportant from agent tool (true/false/1/0)
+  const importantRaw = searchParams.get("checkImportant") ?? searchParams.get("important");
+  const checkImportant = (importantRaw === "true" || importantRaw === "1") ? "1" : "0";
+
   const params = new URLSearchParams({
     ...DEFAULT_PARAMS,
     pageSize,
     timestamp: before,
+    checkImportant,
   });
 
   try {

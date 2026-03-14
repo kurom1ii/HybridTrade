@@ -1,19 +1,30 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { PageTitle } from "@/components/dashboard/page-title";
 import { StaggerGrid } from "@/components/dashboard/motion-primitives";
 import { StatsCard } from "@/components/dashboard/stats-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { StatusPill } from "@/components/dashboard/status-pill";
-import { fetchDashboard, createSchedule } from "@/lib/intelligence-api";
-import { formatRelativeTime, titleFromRole, truncate } from "@/lib/formatting";
+import { fetchDashboard, createSchedule, updateSchedule, deleteSchedule, fetchCapabilities } from "@/lib/intelligence-api";
+import { formatRelativeTime, formatCountdown, titleFromRole, truncate } from "@/lib/formatting";
 import { usePollingResource } from "@/hooks/use-polling-resource";
 import { cn } from "@/lib/utils";
+import type { ScheduleView, CapabilitiesView } from "@/lib/intelligence-types";
+
+// ─── Live Relative Time (re-renders every second) ───
+function LiveTime({ value, mode = "relative" }: { value?: string | null; mode?: "relative" | "countdown" }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <>{mode === "countdown" ? formatCountdown(value) : formatRelativeTime(value)}</>;
+}
 
 // ─── Visual Cron Picker ───
-type FreqMode = "minutes" | "hourly" | "daily" | "weekly" | "custom";
+type FreqMode = "seconds" | "minutes" | "hourly" | "daily" | "weekly" | "custom";
 
 const WEEKDAYS = [
   { value: 0, label: "CN" },
@@ -25,8 +36,11 @@ const WEEKDAYS = [
   { value: 6, label: "T7" },
 ];
 
-function buildCron(mode: FreqMode, everyMin: number, hour: number, minute: number, weekdays: number[]): string {
+function buildCron(mode: FreqMode, everySec: number, everyMin: number, hour: number, minute: number, weekdays: number[]): string {
   switch (mode) {
+    case "seconds":
+      // 6-field cron: sec min hour dom month dow
+      return `*/${everySec} * * * * *`;
     case "minutes":
       return `*/${everyMin} * * * *`;
     case "hourly":
@@ -42,10 +56,12 @@ function buildCron(mode: FreqMode, everyMin: number, hour: number, minute: numbe
   }
 }
 
-function describeCron(mode: FreqMode, everyMin: number, hour: number, minute: number, weekdays: number[]): string {
+function describeCron(mode: FreqMode, everySec: number, everyMin: number, hour: number, minute: number, weekdays: number[]): string {
   const hh = String(hour).padStart(2, "0");
   const mm = String(minute).padStart(2, "0");
   switch (mode) {
+    case "seconds":
+      return `Mỗi ${everySec} giây`;
     case "minutes":
       return `Mỗi ${everyMin} phút`;
     case "hourly":
@@ -65,22 +81,23 @@ function describeCron(mode: FreqMode, everyMin: number, hour: number, minute: nu
 
 function CronPicker({ value, onChange }: { value: string; onChange: (cron: string) => void }) {
   const [mode, setMode] = useState<FreqMode>("minutes");
+  const [everySec, setEverySec] = useState(30);
   const [everyMin, setEveryMin] = useState(5);
   const [hour, setHour] = useState(9);
   const [minute, setMinute] = useState(0);
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
 
-  const cron = useMemo(() => buildCron(mode, everyMin, hour, minute, weekdays), [mode, everyMin, hour, minute, weekdays]);
-  const description = useMemo(() => describeCron(mode, everyMin, hour, minute, weekdays), [mode, everyMin, hour, minute, weekdays]);
+  const cron = useMemo(() => buildCron(mode, everySec, everyMin, hour, minute, weekdays), [mode, everySec, everyMin, hour, minute, weekdays]);
+  const description = useMemo(() => describeCron(mode, everySec, everyMin, hour, minute, weekdays), [mode, everySec, everyMin, hour, minute, weekdays]);
 
-  const updateParent = (newMode: FreqMode, newMin: number, newHour: number, newMinute: number, newWeekdays: number[]) => {
-    onChange(buildCron(newMode, newMin, newHour, newMinute, newWeekdays));
+  const updateParent = (newMode: FreqMode, newSec: number, newMin: number, newHour: number, newMinute: number, newWeekdays: number[]) => {
+    onChange(buildCron(newMode, newSec, newMin, newHour, newMinute, newWeekdays));
   };
 
   const toggleWeekday = (d: number) => {
     const next = weekdays.includes(d) ? weekdays.filter((w) => w !== d) : [...weekdays, d];
     setWeekdays(next);
-    updateParent(mode, everyMin, hour, minute, next);
+    updateParent(mode, everySec, everyMin, hour, minute, next);
   };
 
   return (
@@ -89,6 +106,7 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
         <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">TẦN SUẤT</div>
         <div className="flex gap-1">
           {([
+            { v: "seconds" as const, l: "Mỗi X giây" },
             { v: "minutes" as const, l: "Mỗi X phút" },
             { v: "hourly" as const, l: "Mỗi giờ" },
             { v: "daily" as const, l: "Mỗi ngày" },
@@ -96,7 +114,7 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
           ]).map((opt) => (
             <button
               key={opt.v}
-              onClick={() => { setMode(opt.v); updateParent(opt.v, everyMin, hour, minute, weekdays); }}
+              onClick={() => { setMode(opt.v); updateParent(opt.v, everySec, everyMin, hour, minute, weekdays); }}
               className={cn(
                 "px-3 py-1.5 text-[10px] font-semibold transition-colors",
                 mode === opt.v
@@ -110,6 +128,28 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
         </div>
       </div>
 
+      {mode === "seconds" && (
+        <div>
+          <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">CHẠY MỖI</div>
+          <div className="flex items-center gap-2">
+            {[5, 10, 15, 20, 30, 45, 60].map((s) => (
+              <button
+                key={s}
+                onClick={() => { setEverySec(s); updateParent(mode, s, everyMin, hour, minute, weekdays); }}
+                className={cn(
+                  "px-3 py-1.5 text-[11px] font-bold transition-colors min-w-[40px]",
+                  everySec === s
+                    ? "bg-cyan/15 text-cyan border border-cyan/30"
+                    : "bg-secondary text-text-muted border border-border hover:text-foreground"
+                )}
+              >
+                {s}s
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {mode === "minutes" && (
         <div>
           <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">CHẠY MỖI</div>
@@ -117,7 +157,7 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
             {[1, 2, 3, 5, 10, 15, 30].map((m) => (
               <button
                 key={m}
-                onClick={() => { setEveryMin(m); updateParent(mode, m, hour, minute, weekdays); }}
+                onClick={() => { setEveryMin(m); updateParent(mode, everySec, m, hour, minute, weekdays); }}
                 className={cn(
                   "px-3 py-1.5 text-[11px] font-bold transition-colors min-w-[40px]",
                   everyMin === m
@@ -139,7 +179,7 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
               <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">GIỜ</div>
               <select
                 value={hour}
-                onChange={(e) => { const h = Number(e.target.value); setHour(h); updateParent(mode, everyMin, h, minute, weekdays); }}
+                onChange={(e) => { const h = Number(e.target.value); setHour(h); updateParent(mode, everySec, everyMin, h, minute, weekdays); }}
                 className="bg-secondary border border-border px-3 py-1.5 text-[12px] font-mono focus:border-cyan/50 focus:outline-none"
               >
                 {Array.from({ length: 24 }, (_, i) => (
@@ -152,7 +192,7 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
             <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">PHÚT</div>
             <select
               value={minute}
-              onChange={(e) => { const m = Number(e.target.value); setMinute(m); updateParent(mode, everyMin, hour, m, weekdays); }}
+              onChange={(e) => { const m = Number(e.target.value); setMinute(m); updateParent(mode, everySec, everyMin, hour, m, weekdays); }}
               className="bg-secondary border border-border px-3 py-1.5 text-[12px] font-mono focus:border-cyan/50 focus:outline-none"
             >
               {Array.from({ length: 60 }, (_, i) => (
@@ -194,6 +234,237 @@ function CronPicker({ value, onChange }: { value: string; onChange: (cron: strin
   );
 }
 
+// ─── Chip Toggle Group (multi-select) ───
+function ChipToggleGroup({
+  label,
+  allItems,
+  selected,
+  onChange,
+  allowAllChip,
+}: {
+  label: string;
+  allItems: string[];
+  selected: string[] | null;
+  onChange: (v: string[] | null) => void;
+  allowAllChip: boolean;
+}) {
+  const toggle = (item: string) => {
+    const current = selected ?? allItems.slice();
+    const next = current.includes(item)
+      ? current.filter((i) => i !== item)
+      : [...current, item];
+    onChange(allowAllChip && next.length === allItems.length ? null : next);
+  };
+
+  if (allItems.length === 0) return null;
+
+  return (
+    <div>
+      <div className="text-[10px] font-bold tracking-wider text-text-muted mb-2">{label}</div>
+      <div className="flex gap-1 flex-wrap">
+        {allowAllChip && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className={cn(
+              "px-3 py-1.5 text-[10px] font-semibold transition-colors",
+              selected === null
+                ? "bg-cyan/15 text-cyan border border-cyan/30"
+                : "bg-secondary text-text-muted border border-border hover:text-foreground"
+            )}
+          >
+            ALL
+          </button>
+        )}
+        {allItems.map((item) => (
+          <button
+            type="button"
+            key={item}
+            onClick={() => toggle(item)}
+            className={cn(
+              "px-3 py-1.5 text-[10px] font-semibold transition-colors",
+              (selected === null ? true : selected.includes(item))
+                ? "bg-cyan/15 text-cyan border border-cyan/30"
+                : "bg-secondary text-text-muted border border-border hover:text-foreground"
+            )}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Edit Schedule Modal ───
+function EditScheduleModal({
+  schedule,
+  onClose,
+  onSaved,
+}: {
+  schedule: ScheduleView;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(schedule.name);
+  const [cronExpr, setCronExpr] = useState(schedule.cron_expr);
+  const [agentRole, setAgentRole] = useState(schedule.agent_role);
+  const [message, setMessage] = useState(schedule.message);
+  const [enabled, setEnabled] = useState(schedule.enabled);
+  const [allowedTools, setAllowedTools] = useState<string[] | null>(schedule.allowed_tools ?? null);
+  const [allowedMcps, setAllowedMcps] = useState<string[] | null>(schedule.allowed_mcps ?? null);
+  const [scheduleSkills, setScheduleSkills] = useState<string[]>(schedule.skills ?? []);
+  const [capabilities, setCapabilities] = useState<CapabilitiesView | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCapabilities().then(setCapabilities).catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    if (!name.trim() || !message.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateSchedule(schedule.id, {
+        name: name.trim(),
+        cron_expr: cronExpr.trim(),
+        agent_role: agentRole.trim(),
+        message: message.trim(),
+        enabled,
+        allowed_tools: allowedTools,
+        allowed_mcps: allowedMcps,
+        skills: scheduleSkills.length > 0 ? scheduleSkills : null,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể cập nhật");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 12 }}
+        transition={{ duration: 0.15 }}
+        className="relative z-10 w-full max-w-[640px] max-h-[85vh] overflow-y-auto border border-border bg-card shadow-2xl"
+      >
+        <div className="border-b border-border px-5 py-3 flex items-center justify-between">
+          <h3 className="text-[13px] font-bold uppercase tracking-wider">Chỉnh sửa Schedule</h3>
+          <button onClick={onClose} className="text-text-muted hover:text-foreground text-[18px] leading-none px-1">&times;</button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-bold tracking-wider text-text-muted block mb-1.5">TÊN SCHEDULE</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-secondary border border-border px-3 py-2 text-[12px] focus:border-cyan/50 focus:outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold tracking-wider text-text-muted block mb-1.5">AGENT ROLE</label>
+              <div className="flex gap-2">
+                <select
+                  value={agentRole}
+                  onChange={(e) => setAgentRole(e.target.value)}
+                  className="flex-1 bg-secondary border border-border px-3 py-2 text-[12px] focus:border-cyan/50 focus:outline-none transition-colors"
+                >
+                  <option value="kuromi">Kuromi Finance</option>
+                </select>
+                <label className="flex items-center gap-2 cursor-pointer px-2">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => setEnabled(e.target.checked)}
+                    className="accent-cyan"
+                  />
+                  <span className="text-[10px] font-semibold text-text-muted">ON</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold tracking-wider text-text-muted block mb-1.5">MESSAGE</label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={3}
+              className="w-full bg-secondary border border-border px-3 py-2 text-[12px] focus:border-cyan/50 focus:outline-none transition-colors resize-none"
+            />
+          </div>
+
+          <CronPicker value={cronExpr} onChange={setCronExpr} />
+
+          {capabilities && (
+            <div className="space-y-3 border border-border/50 bg-secondary/20 px-4 py-3">
+              <div className="text-[10px] font-bold tracking-wider text-text-muted">TOOLS / MCP / SKILLS</div>
+              <ChipToggleGroup
+                label="NATIVE TOOLS"
+                allItems={capabilities.tools}
+                selected={allowedTools}
+                onChange={setAllowedTools}
+                allowAllChip
+              />
+              {capabilities.mcps.length > 0 && (
+                <ChipToggleGroup
+                  label="MCP SERVERS"
+                  allItems={capabilities.mcps}
+                  selected={allowedMcps}
+                  onChange={setAllowedMcps}
+                  allowAllChip
+                />
+              )}
+              {capabilities.skills.length > 0 && (
+                <ChipToggleGroup
+                  label="SKILLS"
+                  allItems={capabilities.skills}
+                  selected={scheduleSkills}
+                  onChange={(v) => setScheduleSkills(v ?? [])}
+                  allowAllChip={false}
+                />
+              )}
+            </div>
+          )}
+
+          {error && <div className="text-[11px] text-loss bg-loss/10 px-3 py-2">{error}</div>}
+
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-[11px] font-bold tracking-wider bg-secondary text-text-muted hover:text-foreground transition-colors"
+            >
+              HỦY
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !name.trim() || !message.trim()}
+              className={cn(
+                "flex-1 px-4 py-2 text-[11px] font-bold tracking-wider transition-colors",
+                saving || !name.trim() || !message.trim()
+                  ? "bg-secondary text-text-muted cursor-not-allowed"
+                  : "bg-cyan/10 text-cyan hover:bg-cyan/20 border border-cyan/20"
+              )}
+            >
+              {saving ? "ĐANG LƯU..." : "LƯU THAY ĐỔI"}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── Presets ───
 const presetJobs = [
   { name: "XAU/USD Analysis", cron: "*/5 * * * *", role: "kuromi", message: "Phân tích kỹ thuật XAU/USD: xu hướng, hỗ trợ/kháng cự, tín hiệu giao dịch.", desc: "Phân tích XAU/USD mỗi 5 phút" },
@@ -212,15 +483,22 @@ function statusColor(status: string): string {
 
 export default function AgentsPage() {
   const { data, loading, error, reload } = usePollingResource("agent-console", fetchDashboard, {
-    intervalMs: 60_000,
+    intervalMs: 10_000,
   });
 
   const [showForm, setShowForm] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleView | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formCron, setFormCron] = useState("*/5 * * * *");
   const [formAgentRole, setFormAgentRole] = useState("kuromi");
   const [formMessage, setFormMessage] = useState("");
   const [formEnabled, setFormEnabled] = useState(true);
+  const [formAllowedTools, setFormAllowedTools] = useState<string[] | null>(null);
+  const [formAllowedMcps, setFormAllowedMcps] = useState<string[] | null>(null);
+  const [formSkills, setFormSkills] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<CapabilitiesView | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -228,6 +506,10 @@ export default function AgentsPage() {
   const schedules = data?.schedules ?? [];
   const activeSchedules = schedules.filter((s) => s.enabled);
   const runningTasks = schedules.filter((s) => s.last_status === "running");
+
+  useEffect(() => {
+    fetchCapabilities().then(setCapabilities).catch(() => {});
+  }, []);
 
   const handlePreset = (preset: typeof presetJobs[number]) => {
     setFormName(preset.name);
@@ -250,6 +532,9 @@ export default function AgentsPage() {
         enabled: formEnabled,
         agent_role: formAgentRole.trim(),
         message: formMessage.trim(),
+        allowed_tools: formAllowedTools,
+        allowed_mcps: formAllowedMcps,
+        skills: formSkills.length > 0 ? formSkills : null,
       });
       setSubmitSuccess(true);
       setFormName("");
@@ -264,6 +549,28 @@ export default function AgentsPage() {
       setSubmitError(err instanceof Error ? err.message : "Không thể tạo schedule");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleToggle = async (schedule: ScheduleView) => {
+    setTogglingId(schedule.id);
+    try {
+      await updateSchedule(schedule.id, { enabled: !schedule.enabled });
+      reload();
+    } catch {
+      // silent
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteSchedule(id);
+      setDeletingId(null);
+      reload();
+    } catch {
+      // silent
     }
   };
 
@@ -321,7 +628,7 @@ export default function AgentsPage() {
                   <StatusPill value={agent.status} />
                 </div>
                 <div className="mt-4 flex items-center gap-3 text-[10px] uppercase tracking-[0.8px] text-text-muted">
-                  <span>Last run {formatRelativeTime(agent.last_seen_at)}</span>
+                  <span>Last run <LiveTime value={agent.last_seen_at} /></span>
                   {agent.open_runs > 0 && (
                     <span className="text-cyan font-bold">{agent.open_runs} RUNNING</span>
                   )}
@@ -373,13 +680,87 @@ export default function AgentsPage() {
                         {" — "}
                         {truncate(schedule.message, 100)}
                       </div>
+                      {(schedule.allowed_tools || schedule.allowed_mcps || (schedule.skills && schedule.skills.length > 0)) && (
+                        <div className="mt-1.5 flex gap-1.5 flex-wrap">
+                          {schedule.allowed_tools && (
+                            <span className="text-[9px] font-bold tracking-wide bg-cyan/8 text-cyan/80 px-1.5 py-0.5 border border-cyan/15">
+                              TOOLS: {schedule.allowed_tools.length}
+                            </span>
+                          )}
+                          {schedule.allowed_mcps && (
+                            <span className="text-[9px] font-bold tracking-wide bg-cyan/8 text-cyan/80 px-1.5 py-0.5 border border-cyan/15">
+                              MCP: {schedule.allowed_mcps.length}
+                            </span>
+                          )}
+                          {schedule.skills && schedule.skills.length > 0 && (
+                            <span className="text-[9px] font-bold tracking-wide bg-purple-500/8 text-purple-400/80 px-1.5 py-0.5 border border-purple-500/15">
+                              SKILLS: {schedule.skills.join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className={cn("text-[11px] font-bold uppercase", statusColor(schedule.last_status))}>
-                        {schedule.last_status}
+                    <div className="flex items-start gap-3">
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => handleToggle(schedule)}
+                          disabled={togglingId === schedule.id}
+                          title={schedule.enabled ? "Tạm dừng" : "Tiếp tục"}
+                          className={cn(
+                            "px-2.5 py-1 text-[9px] font-bold tracking-wider transition-colors border",
+                            togglingId === schedule.id
+                              ? "bg-secondary text-text-muted border-border cursor-wait"
+                              : schedule.enabled
+                                ? "bg-warning/10 text-warning border-warning/20 hover:bg-warning/20"
+                                : "bg-profit/10 text-profit border-profit/20 hover:bg-profit/20"
+                          )}
+                        >
+                          {togglingId === schedule.id ? "..." : schedule.enabled ? "TẠM DỪNG" : "TIẾP TỤC"}
+                        </button>
+                        <button
+                          onClick={() => setEditingSchedule(schedule)}
+                          title="Chỉnh sửa"
+                          className="px-2.5 py-1 text-[9px] font-bold tracking-wider bg-cyan/10 text-cyan border border-cyan/20 hover:bg-cyan/20 transition-colors"
+                        >
+                          SỬA
+                        </button>
+                        {deletingId === schedule.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleDelete(schedule.id)}
+                              className="px-2.5 py-1 text-[9px] font-bold tracking-wider bg-loss/10 text-loss border border-loss/20 hover:bg-loss/20 transition-colors"
+                            >
+                              XÁC NHẬN
+                            </button>
+                            <button
+                              onClick={() => setDeletingId(null)}
+                              className="px-2.5 py-1 text-[9px] font-bold tracking-wider bg-secondary text-text-muted border border-border hover:text-foreground transition-colors"
+                            >
+                              HỦY
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeletingId(schedule.id)}
+                            title="Xóa"
+                            className="px-2.5 py-1 text-[9px] font-bold tracking-wider bg-secondary text-text-muted border border-border hover:bg-loss/10 hover:text-loss hover:border-loss/20 transition-colors"
+                          >
+                            XÓA
+                          </button>
+                        )}
                       </div>
-                      <div className="text-[10px] text-text-muted mt-0.5">
-                        {formatRelativeTime(schedule.last_run_at)}
+                      {/* Status info */}
+                      <div className="text-right shrink-0">
+                        <div className={cn("text-[11px] font-bold uppercase", statusColor(schedule.last_status))}>
+                          {schedule.last_status}
+                        </div>
+                        <div className="text-[10px] text-text-muted mt-0.5">
+                          Ran <LiveTime value={schedule.last_run_at} />
+                        </div>
+                        <div className="text-[10px] text-text-faint mt-0.5">
+                          Next: <span className="text-cyan font-mono"><LiveTime value={schedule.next_run_at} mode="countdown" /></span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -496,6 +877,38 @@ export default function AgentsPage() {
                     {/* Visual Cron Picker */}
                     <CronPicker value={formCron} onChange={setFormCron} />
 
+                    {/* Tool / MCP / Skill Filter */}
+                    {capabilities && (
+                      <div className="space-y-3 border border-border/50 bg-secondary/20 px-4 py-3">
+                        <div className="text-[10px] font-bold tracking-wider text-text-muted">TOOLS / MCP / SKILLS</div>
+                        <ChipToggleGroup
+                          label="NATIVE TOOLS"
+                          allItems={capabilities.tools}
+                          selected={formAllowedTools}
+                          onChange={setFormAllowedTools}
+                          allowAllChip
+                        />
+                        {capabilities.mcps.length > 0 && (
+                          <ChipToggleGroup
+                            label="MCP SERVERS"
+                            allItems={capabilities.mcps}
+                            selected={formAllowedMcps}
+                            onChange={setFormAllowedMcps}
+                            allowAllChip
+                          />
+                        )}
+                        {capabilities.skills.length > 0 && (
+                          <ChipToggleGroup
+                            label="SKILLS"
+                            allItems={capabilities.skills}
+                            selected={formSkills}
+                            onChange={(v) => setFormSkills(v ?? [])}
+                            allowAllChip={false}
+                          />
+                        )}
+                      </div>
+                    )}
+
                     {submitError && (
                       <div className="text-[11px] text-loss bg-loss/10 px-3 py-2">{submitError}</div>
                     )}
@@ -528,6 +941,20 @@ export default function AgentsPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* Edit Modal */}
+      <AnimatePresence>
+        {editingSchedule && (
+          <EditScheduleModal
+            schedule={editingSchedule}
+            onClose={() => setEditingSchedule(null)}
+            onSaved={() => {
+              setEditingSchedule(null);
+              reload();
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

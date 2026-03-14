@@ -1,7 +1,6 @@
 use std::{future::Future, pin::Pin};
 
 use anyhow::{Context, Result};
-use futures_util::future::join_all;
 use reqwest::Client;
 use tokio::sync::mpsc;
 
@@ -15,12 +14,13 @@ use super::{
     },
     models::{
         SpawnTeamMemberSpec, SpawnTeamMemberView, SpawnTeamReport, SpawnTeamRequest,
-        SpawnTeamResult, SpawnTeamTranscriptEntry, TeamRuntimeContext,
+        SpawnTeamResult, TeamRuntimeContext,
     },
     prompt::{
-        build_kuromi_brief, build_round_message, build_runtime_context_preview,
-        build_subagent_system_prompt,
+        build_directive_content, build_kuromi_brief, build_member_inbox,
+        build_runtime_context_preview, build_subagent_system_prompt,
     },
+    session::{TeamMessageKind, TeamSession},
 };
 
 use crate::agents::tool_runtime::runtime::ToolRuntime;
@@ -75,14 +75,37 @@ impl TeamOrchestrator {
     ) -> Pin<Box<dyn Future<Output = Result<SpawnTeamResult>> + Send + '_>> {
         Box::pin(async move {
             let request = request.validate()?;
+            let mut session = TeamSession::new(None);
+
+            // ── Phase 1: Setup ──
+            let member_names: Vec<String> =
+                request.members.iter().map(|m| m.name.clone()).collect();
+            let roster: Vec<String> = request
+                .members
+                .iter()
+                .map(|m| format!("{} ({})", m.name, m.responsibility))
+                .collect();
+
+            session.append(
+                "system",
+                "*",
+                TeamMessageKind::System,
+                &format!(
+                    "Team spawned. Mission: {}. Members: [{}]",
+                    request.mission,
+                    roster.join(", ")
+                ),
+                vec![],
+                None,
+            );
 
             self.emit(ChatStreamEvent::TeamStarted {
+                session_id: session.session_id().to_string(),
                 mission: request.mission.clone(),
-                members: request.members.iter().map(|m| m.name.clone()).collect(),
+                members: member_names.clone(),
             });
 
-            // Mỗi subagent được cấp runtime đầy đủ riêng biệt (native + MCP)
-            // với Chrome DevTools chạy `--isolated` để có browser instance độc lập.
+            // Bootstrap isolated runtimes for each member
             let mut member_states = Vec::with_capacity(request.members.len());
             for member in request.members.iter().cloned() {
                 let mut runtime = self
@@ -96,116 +119,130 @@ impl TeamOrchestrator {
                 member_states.push(TeamMemberState { member, runtime });
             }
 
-            let mut transcript = Vec::new();
-            for round_index in 0..request.rounds {
-                let is_last_round = round_index + 1 == request.rounds;
-                let round_config = &self.provider_config;
-                let round_label = if is_last_round { "execute" } else { "discuss" };
+            // ── Phase 2: Exchange Cycles (sequential) ──
+            for exchange in 0..request.rounds {
+                let is_last = exchange + 1 == request.rounds;
+                let phase_label = if is_last { "execute" } else { "discuss" };
 
                 self.emit(ChatStreamEvent::TeamRound {
-                    round: round_index + 1,
+                    round: exchange + 1,
                     total: request.rounds,
-                    phase: round_label.to_string(),
+                    phase: phase_label.to_string(),
                 });
 
-                let runtime_context = build_runtime_context_preview(
+                // Leader sends directive (broadcast to all)
+                let directive = build_directive_content(
                     &request,
-                    &turn_context.history,
-                    turn_context.context_preview.as_deref(),
-                    &transcript,
+                    exchange,
+                    is_last,
+                    &session,
                 );
-                let history_snapshot = turn_context.history.clone();
-                let transcript_snapshot = transcript.clone();
-                let request_snapshot = request.clone();
+                let directive_msg = session.append(
+                    "kuromi",
+                    "*",
+                    TeamMessageKind::Directive,
+                    &directive,
+                    vec![],
+                    Some(serde_json::json!({ "exchange": exchange + 1 })),
+                );
+                let directive_seq = directive_msg.seq;
+                let directive_session_id = session.session_id().to_string();
 
-                let round_results = join_all(member_states.into_iter().map(|mut state| {
-                    let runtime_context = runtime_context.clone();
-                    let history_snapshot = history_snapshot.clone();
-                    let transcript_snapshot = transcript_snapshot.clone();
-                    let request_snapshot = request_snapshot.clone();
-                    let active_skills = self.active_skills.clone();
-                    let round_config = round_config.clone();
-                    let is_final = is_last_round;
+                self.emit(ChatStreamEvent::TeamDirective {
+                    session_id: directive_session_id,
+                    seq: directive_seq,
+                    to: "*".to_string(),
+                    content_preview: truncate_content(&directive, 200),
+                });
 
-                    async move {
-                        state.runtime.prepare_turn(&[], runtime_context);
+                // Members respond SEQUENTIALLY (not parallel)
+                let mut next_member_states = Vec::with_capacity(member_states.len());
 
-                        let system_prompt = build_subagent_system_prompt(
-                            &request_snapshot,
-                            &state.member.name,
-                            &state.member.responsibility,
-                            state.member.instructions.as_deref(),
-                        );
-                        let message = build_round_message(
-                            &request_snapshot,
-                            round_index + 1,
-                            request_snapshot.rounds,
-                            &history_snapshot,
-                            &transcript_snapshot,
-                            &active_skills,
-                        );
+                for mut state in member_states.into_iter() {
+                    let runtime_context = build_runtime_context_preview(
+                        &request,
+                        &turn_context.history,
+                        turn_context.context_preview.as_deref(),
+                        &session,
+                    );
 
-                        let content = call_provider(
-                            &self.client,
-                            self.provider,
-                            &round_config,
-                            self.api_key.as_deref(),
-                            &system_prompt,
-                            &[],
-                            &message,
-                            Some(if is_final {
-                                round_config.max_tokens
-                            } else {
-                                round_config.max_tokens.min(4096)
-                            }),
-                            Some(round_config.temperature),
-                            &mut state.runtime,
+                    state.runtime.prepare_turn(&[], runtime_context);
+
+                    let system_prompt = build_subagent_system_prompt(
+                        &request,
+                        &state.member.name,
+                        &state.member.responsibility,
+                        state.member.instructions.as_deref(),
+                        &roster,
+                        session.session_id(),
+                    );
+
+                    let inbox = build_member_inbox(
+                        &state.member.name,
+                        &session,
+                        &self.active_skills,
+                    );
+
+                    let config = &self.provider_config;
+                    let content = call_provider(
+                        &self.client,
+                        self.provider,
+                        config,
+                        self.api_key.as_deref(),
+                        &system_prompt,
+                        &[],
+                        &inbox,
+                        Some(if is_last {
+                            config.max_tokens
+                        } else {
+                            config.max_tokens.min(4096)
+                        }),
+                        Some(config.temperature),
+                        &mut state.runtime,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "subagent `{}` thất bại ở exchange {}",
+                            state.member.name,
+                            exchange + 1
                         )
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "subagent `{}` thất bại ở round {}",
-                                state.member.name,
-                                round_index + 1
-                            )
-                        })?;
+                    })?;
 
-                        let speaker = state.member.name.clone();
-                        let responsibility = state.member.responsibility.clone();
-                        let member_tool_calls = state.runtime.tool_calls().to_vec();
+                    let member_tool_calls = state.runtime.tool_calls().to_vec();
 
-                        Ok::<_, anyhow::Error>((
-                            state,
-                            SpawnTeamTranscriptEntry {
-                                round: round_index + 1,
-                                speaker,
-                                responsibility,
-                                content: content.trim().to_string(),
-                                tool_calls: member_tool_calls,
-                            },
-                        ))
-                    }
-                }))
-                .await;
+                    // Append response to session
+                    session.append(
+                        &state.member.name,
+                        "kuromi",
+                        TeamMessageKind::Response,
+                        content.trim(),
+                        member_tool_calls.clone(),
+                        Some(serde_json::json!({ "exchange": exchange + 1 })),
+                    );
 
-                let mut next_member_states = Vec::with_capacity(round_results.len());
-                let mut round_entries = Vec::with_capacity(round_results.len());
-
-                for result in round_results {
-                    let (state, entry) = result?;
                     self.emit(ChatStreamEvent::TeamMemberResponse {
-                        member: entry.speaker.clone(),
-                        round: entry.round,
-                        content: truncate_content(&entry.content, 300),
-                        tool_calls: entry.tool_calls.clone(),
+                        member: state.member.name.clone(),
+                        round: exchange + 1,
+                        content: truncate_content(&content, 300),
+                        tool_calls: member_tool_calls,
                     });
+
                     next_member_states.push(state);
-                    round_entries.push(entry);
                 }
 
-                transcript.extend(round_entries);
                 member_states = next_member_states;
             }
+
+            // ── Phase 3: Completion ──
+            session.append(
+                "system",
+                "*",
+                TeamMessageKind::System,
+                "Team completed.",
+                vec![],
+                None,
+            );
 
             self.emit(ChatStreamEvent::TeamCompleted);
 
@@ -214,18 +251,19 @@ impl TeamOrchestrator {
                 .iter()
                 .map(SpawnTeamMemberView::from)
                 .collect::<Vec<_>>();
-            let reports = build_reports(&request, &transcript);
+            let reports = build_reports(&request, &session);
             let kuromi_brief = build_kuromi_brief(&request, &reports);
 
             Ok(SpawnTeamResult {
                 ok: true,
                 mission: request.mission,
                 briefing: request.briefing,
-                rounds_completed: request.rounds,
+                session_id: session.session_id().to_string(),
+                log_path: session.log_path().to_string(),
+                exchanges_completed: request.rounds,
                 provider: self.provider.name().to_string(),
                 model: self.provider_config.model.clone(),
                 members,
-                transcript,
                 reports,
                 kuromi_brief,
             })
@@ -235,17 +273,22 @@ impl TeamOrchestrator {
 
 fn build_reports(
     request: &SpawnTeamRequest,
-    transcript: &[SpawnTeamTranscriptEntry],
+    session: &TeamSession,
 ) -> Vec<SpawnTeamReport> {
     request
         .members
         .iter()
         .map(|member| {
-            let report = transcript
+            // Find the last response from this member
+            let report = session
+                .messages()
                 .iter()
                 .rev()
-                .find(|entry| entry.speaker.eq_ignore_ascii_case(&member.name))
-                .map(|entry| entry.content.clone())
+                .find(|msg| {
+                    msg.from.eq_ignore_ascii_case(&member.name)
+                        && msg.kind == TeamMessageKind::Response
+                })
+                .map(|msg| msg.content.clone())
                 .unwrap_or_else(|| "Không có phản hồi nào được ghi nhận.".to_string());
 
             SpawnTeamReport {

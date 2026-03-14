@@ -198,6 +198,8 @@ enum ChatStreamEvent {
         output_preview: String,
     },
     TeamStarted {
+        #[serde(default)]
+        session_id: String,
         mission: String,
         members: Vec<String>,
     },
@@ -206,6 +208,16 @@ enum ChatStreamEvent {
         total: usize,
         #[serde(default)]
         phase: String,
+    },
+    TeamDirective {
+        #[serde(default)]
+        session_id: String,
+        #[serde(default)]
+        seq: usize,
+        #[serde(default)]
+        to: String,
+        #[serde(default)]
+        content_preview: String,
     },
     TeamToolCall {
         member: String,
@@ -326,17 +338,21 @@ impl BackendClient {
                             color, tool, status, preview,
                         );
                     }
-                    Ok(ChatStreamEvent::TeamStarted { mission, members }) => {
+                    Ok(ChatStreamEvent::TeamStarted { session_id, mission, members }) => {
                         if !has_tool_activity {
                             print!("\r\x1b[2K");
                             has_tool_activity = true;
                         }
                         println!();
-                        println!("=== Team: {} ===", mission);
+                        println!("=== Team [{}]: {} ===", session_id, mission);
                         println!(
                             "Members: {}",
                             members.join(", ")
                         );
+                    }
+                    Ok(ChatStreamEvent::TeamDirective { seq, to, content_preview, .. }) => {
+                        let target = if to == "*" { "all".to_string() } else { to };
+                        println!("  [kuromi→{}] #{}: {}", target, seq, truncate_preview(&content_preview, 150));
                     }
                     Ok(ChatStreamEvent::TeamRound { round, total, phase }) => {
                         let phase_label = if phase.is_empty() {

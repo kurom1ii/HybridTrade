@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
 use crate::config::{ProviderConfig, ProvidersConfig, ToolingConfig};
+use crate::models::ToolFilter;
 
 use super::super::{
     models::{
@@ -65,6 +66,7 @@ pub struct AgentChatOptions {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub context: Option<AgentPromptContext>,
+    pub tool_filter: Option<ToolFilter>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -173,6 +175,14 @@ impl ProviderHub {
         self.capabilities.profile_for(role)
     }
 
+    pub fn all_capabilities(&self) -> crate::models::CapabilitiesView {
+        crate::models::CapabilitiesView {
+            tools: self.capabilities.all_native_tool_names(),
+            mcps: self.capabilities.all_mcp_server_names(),
+            skills: self.capabilities.all_skill_names(),
+        }
+    }
+
     pub async fn chat(
         &self,
         agent_role: AgentRole,
@@ -187,9 +197,17 @@ impl ProviderHub {
             max_tokens,
             temperature,
             context,
+            tool_filter,
         } = options;
 
-        let turn_skills = self.capabilities.resolve_turn_skills(&message);
+        let tool_filter = tool_filter.unwrap_or_default();
+
+        let mut turn_skills = self.capabilities.resolve_turn_skills(&message);
+        if !tool_filter.skills.is_empty() {
+            turn_skills = self
+                .capabilities
+                .merge_schedule_skills(turn_skills, &tool_filter.skills);
+        }
 
         let provider = self.resolve_provider(provider.as_deref())?;
         let config = self.provider_config(provider).clone();
@@ -240,7 +258,7 @@ impl ProviderHub {
 
         let mut tool_runtime = self
             .capabilities
-            .tool_runtime_for(&normalized_history, context_preview.clone())
+            .tool_runtime_for_filtered(&normalized_history, context_preview.clone(), &tool_filter)
             .await;
 
         self.run_chat_with_runtime(

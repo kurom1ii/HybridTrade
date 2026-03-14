@@ -1,13 +1,24 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { PageTitle } from "@/components/dashboard/page-title";
 import { StatusPill } from "@/components/dashboard/status-pill";
 import { fetchDashboard } from "@/lib/intelligence-api";
-import { formatDateTime, formatRelativeTime } from "@/lib/formatting";
+import { formatDateTime, formatRelativeTime, formatCountdown } from "@/lib/formatting";
 import { usePollingResource } from "@/hooks/use-polling-resource";
 import { cn } from "@/lib/utils";
+
+// ─── Live Relative Time (re-renders every second) ───
+function LiveTime({ value, mode = "relative" }: { value?: string | null; mode?: "relative" | "countdown" }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <>{mode === "countdown" ? formatCountdown(value) : formatRelativeTime(value)}</>;
+}
 
 function statusColor(status: string): string {
   switch (status) {
@@ -20,7 +31,7 @@ function statusColor(status: string): string {
 
 export default function AnalyticsPage() {
   const { data, loading, error } = usePollingResource("analytics-dashboard", fetchDashboard, {
-    intervalMs: 60_000,
+    intervalMs: 10_000,
   });
 
   const schedules = data?.schedules ?? [];
@@ -119,11 +130,11 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
                 <div className="text-text-secondary">
-                  <div>{formatRelativeTime(schedule.last_run_at)}</div>
+                  <div><LiveTime value={schedule.last_run_at} mode="relative" /></div>
                   <div className="mt-1 text-[10px] text-text-muted">{formatDateTime(schedule.last_run_at)}</div>
                 </div>
                 <div className="text-text-secondary">
-                  <div>{formatRelativeTime(schedule.next_run_at)}</div>
+                  <div className="text-cyan font-mono font-bold"><LiveTime value={schedule.next_run_at} mode="countdown" /></div>
                   <div className="mt-1 text-[10px] text-text-muted">{formatDateTime(schedule.next_run_at)}</div>
                 </div>
                 <div>

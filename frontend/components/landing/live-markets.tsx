@@ -2,10 +2,22 @@
 
 import { motion, useInView } from "motion/react";
 import { useRef } from "react";
+import { usePrices } from "@/hooks/usePrices";
 
-const markets = [
-  { pair: "XAU/USD", name: "Gold", price: "2,178.40", change: "+0.89%", type: "profit" },
-];
+const DISPLAY_SYMBOLS = ["XAUUSD", "XAGUSD", "EURUSD", "GBPJPY", "BTCUSDT", "US30", "US500", "UK100", "WTI", "BRENT"];
+
+const nameMap: Record<string, string> = {
+  XAUUSD: "Gold",
+  XAGUSD: "Silver",
+  EURUSD: "EUR/USD",
+  GBPJPY: "GBP/JPY",
+  BTCUSDT: "Bitcoin",
+  US30: "Dow Jones",
+  US500: "S&P 500",
+  UK100: "FTSE 100",
+  WTI: "WTI Oil",
+  BRENT: "Brent Oil",
+};
 
 const features = [
   { title: "Real-Time Signals", desc: "AI-generated buy/sell signals with confidence scoring across all major pairs.", metric: "847", label: "SIGNALS / DAY" },
@@ -13,9 +25,31 @@ const features = [
   { title: "Multi-Agent AI", desc: "4 specialized agents working together — scanner, strategist, risk manager, executor.", metric: "4", label: "AGENTS" },
 ];
 
+function formatPrice(price: number, precision: number): string {
+  return price.toLocaleString("en-US", {
+    minimumFractionDigits: Math.min(precision, 2),
+    maximumFractionDigits: precision,
+  });
+}
+
 export function LiveMarkets() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-80px" });
+  const { prices, loading, connected } = usePrices({ symbols: DISPLAY_SYMBOLS });
+
+  const markets = DISPLAY_SYMBOLS.map((sym) => {
+    const p = prices.find((x) => x.symbol === sym || x.symbol.replace(/-/g, "") === sym);
+    if (!p) return { pair: sym.length <= 6 ? sym.slice(0, 3) + "/" + sym.slice(3) : sym, name: nameMap[sym] || sym, price: "—", change: "—", type: "profit" as const, loading: true };
+    const pctStr = `${p.changePct >= 0 ? "+" : ""}${(p.changePct * 100).toFixed(2)}%`;
+    return {
+      pair: sym.length <= 6 ? sym.slice(0, 3) + "/" + sym.slice(3) : sym,
+      name: nameMap[sym] || p.name,
+      price: formatPrice(p.price, p.precision),
+      change: pctStr,
+      type: (p.changePct >= 0 ? "profit" : "loss") as "profit" | "loss",
+      loading: false,
+    };
+  });
 
   return (
     <section id="markets" className="relative py-28 px-6 overflow-hidden" ref={ref}>
@@ -30,8 +64,10 @@ export function LiveMarkets() {
           className="text-center mb-14"
         >
           <div className="inline-flex items-center gap-2 mb-3">
-            <span className="h-1.5 w-1.5 rounded-full bg-profit live-dot" />
-            <span className="text-[9px] font-bold tracking-[2px] text-profit">LIVE DATA</span>
+            <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-profit live-dot" : "bg-text-muted"}`} />
+            <span className={`text-[9px] font-bold tracking-[2px] ${connected ? "text-profit" : "text-text-muted"}`}>
+              {connected ? "LIVE FEED" : "MARKET DATA"}
+            </span>
           </div>
           <h2 className="text-[40px] font-bold tracking-[-1.5px]">Live Markets</h2>
           <p className="mx-auto mt-3 max-w-[460px] text-[13px] leading-[1.8] text-text-secondary">
@@ -71,7 +107,7 @@ export function LiveMarkets() {
                     className="text-[12px] font-semibold tabular-nums"
                     style={{ color: market.type === "profit" ? "var(--profit)" : "var(--loss)" }}
                   >
-                    {market.type === "profit" ? "+" : ""}{market.change}
+                    {market.change}
                   </span>
                 </div>
                 {/* Mini sparkline */}

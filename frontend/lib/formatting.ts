@@ -28,6 +28,27 @@ export function formatRelativeTime(value?: string | null): string {
   return relativeFormatter.format(Math.round(diffSeconds / 86_400), "day");
 }
 
+/** Show remaining time until a future timestamp as a short countdown string.
+ *  e.g. "42s", "3m 12s", "1h 5m", or "đã qua" if in the past. */
+export function formatCountdown(value?: string | null): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+
+  const remaining = Math.round((date.getTime() - Date.now()) / 1000);
+  if (remaining <= 0) return "đang chờ chạy";
+
+  if (remaining < 60) return `${remaining}s`;
+  if (remaining < 3600) {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 export function truncate(value: string, maxLength = 120): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 1)}…`;

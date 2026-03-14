@@ -129,23 +129,28 @@ async fn call_openai(
                 .ok_or_else(|| anyhow!("phản hồi OpenAI Responses API không có nội dung"));
         }
 
-        for function_call in function_calls {
+        // Push all function_call entries into input first
+        for fc in &function_calls {
             input.push(json!({
                 "type": "function_call",
-                "name": function_call.name,
-                "call_id": function_call.call_id,
-                "arguments": function_call.arguments,
+                "name": fc.name,
+                "call_id": fc.call_id,
+                "arguments": fc.arguments,
             }));
+        }
 
-            let output = tool_runtime
-                .execute(
-                    &function_call.name,
-                    parse_json_arguments(&function_call.arguments),
-                )
-                .await;
+        // Execute tools — concurrent when multiple, sequential when single
+        let calls: Vec<(String, Value)> = function_calls
+            .iter()
+            .map(|fc| (fc.name.clone(), parse_json_arguments(&fc.arguments)))
+            .collect();
+        let outputs = tool_runtime.execute_concurrent(calls).await;
+
+        // Pair each output with its call_id
+        for (fc, output) in function_calls.iter().zip(outputs) {
             input.push(json!({
                 "type": "function_call_output",
-                "call_id": function_call.call_id,
+                "call_id": fc.call_id,
                 "output": output,
             }));
         }
@@ -206,15 +211,11 @@ async fn call_anthropic(
             "max_tokens": effective_max,
         });
 
-        // Enable thinking for all calls — Opus lần đầu suy luận sâu,
-        // Sonnet các lần sau cũng cần thinking để xử lý tool result chính xác.
-        if config.thinking
-            && effective_max > config.thinking_budget_tokens
-            && config.thinking_budget_tokens >= 1024
-        {
+        // Enable adaptive thinking for Claude models (opus-4.6, sonnet-4.6).
+        // Adaptive mode lets the model decide when and how much to think.
+        if config.thinking {
             payload["thinking"] = json!({
-                "type": "enabled",
-                "budget_tokens": config.thinking_budget_tokens,
+                "type": "adaptive",
             });
         }
 
@@ -242,9 +243,15 @@ async fn call_anthropic(
                 .unwrap_or_else(|| Value::Array(Vec::new())),
         }));
 
+        // Execute tools — concurrent when multiple, sequential when single
+        let calls: Vec<(String, Value)> = tool_uses
+            .iter()
+            .map(|tu| (tu.name.clone(), tu.input.clone()))
+            .collect();
+        let outputs = tool_runtime.execute_concurrent(calls).await;
+
         let mut tool_results = Vec::new();
-        for tool_use in tool_uses {
-            let output = tool_runtime.execute(&tool_use.name, tool_use.input).await;
+        for (tool_use, output) in tool_uses.iter().zip(outputs) {
             tool_results.push(json!({
                 "type": "tool_result",
                 "tool_use_id": tool_use.id,

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{SecondsFormat, Utc};
 use cron::Schedule;
 use serde::Serialize;
 use serde_json::Value;
@@ -9,18 +9,13 @@ use crate::{
     agents::AgentRole,
     config::ScheduleSeed,
     models::{
-        new_id, AgentStatusView, DashboardResponse, ScheduleRow, ScheduleView,
+        new_id, AgentStatusView, DashboardResponse, InstrumentRow, InstrumentView,
+        ScheduleRow, ScheduleView, UpsertInstrumentRequest,
     },
 };
 
 pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
-}
-
-pub fn parse_rfc3339(value: &str) -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(value)
-        .with_context(|| format!("invalid datetime {value}"))?
-        .with_timezone(&Utc))
 }
 
 pub fn to_json_string<T: Serialize + ?Sized>(value: &T) -> String {
@@ -29,6 +24,17 @@ pub fn to_json_string<T: Serialize + ?Sized>(value: &T) -> String {
 
 pub fn from_json_value(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or(Value::Null)
+}
+
+fn parse_json_string_array(value: &Option<String>) -> Option<Vec<String>> {
+    value
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "null")
+        .and_then(|s| serde_json::from_str(s).ok())
+}
+
+fn serialize_opt_vec(value: &Option<Vec<String>>) -> Option<String> {
+    value.as_ref().map(|v| to_json_string(v))
 }
 
 /// Normalize a cron expression: the `cron` crate requires 6 or 7 fields
@@ -173,8 +179,8 @@ pub async fn create_schedule(
     let next_run_at = schedule_next_run(&request.cron_expr)?;
     query(
         r#"
-        INSERT INTO schedules (id, name, cron_expr, job_type, enabled, payload_json, last_run_at, next_run_at, updated_at, agent_role, message)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10)
+        INSERT INTO schedules (id, name, cron_expr, job_type, enabled, payload_json, last_run_at, next_run_at, updated_at, agent_role, message, allowed_tools, allowed_mcps, skills)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#,
     )
     .bind(&id)
@@ -187,6 +193,9 @@ pub async fn create_schedule(
     .bind(now)
     .bind(&request.agent_role)
     .bind(&request.message)
+    .bind(serialize_opt_vec(&request.allowed_tools))
+    .bind(serialize_opt_vec(&request.allowed_mcps))
+    .bind(serialize_opt_vec(&request.skills))
     .execute(pool)
     .await?;
 
@@ -208,34 +217,73 @@ pub async fn update_schedule(
         .await
         .with_context(|| format!("schedule {schedule_id} not found"))?;
 
+    let name = request
+        .name
+        .clone()
+        .unwrap_or_else(|| current.name.clone());
     let cron_expr = request
         .cron_expr
         .clone()
         .unwrap_or_else(|| current.cron_expr.clone());
     let enabled = request.enabled.unwrap_or(current.enabled == 1);
+    let agent_role = request
+        .agent_role
+        .clone()
+        .unwrap_or_else(|| current.agent_role.clone());
+    let message = request
+        .message
+        .clone()
+        .unwrap_or_else(|| current.message.clone());
     let payload = request
         .payload
         .clone()
         .unwrap_or_else(|| from_json_value(&current.payload_json));
     let next_run_at = schedule_next_run(&cron_expr)?;
+    let allowed_tools = match &request.allowed_tools {
+        None => current.allowed_tools.clone(),
+        Some(Value::Null) => None,
+        Some(v) => Some(to_json_string(v)),
+    };
+    let allowed_mcps = match &request.allowed_mcps {
+        None => current.allowed_mcps.clone(),
+        Some(Value::Null) => None,
+        Some(v) => Some(to_json_string(v)),
+    };
+    let skills = match &request.skills {
+        None => current.skills.clone(),
+        Some(Value::Null) => None,
+        Some(v) => Some(to_json_string(v)),
+    };
 
     query(
         r#"
         UPDATE schedules
-        SET cron_expr = ?2,
-            enabled = ?3,
-            payload_json = ?4,
-            next_run_at = ?5,
-            updated_at = ?6
+        SET name = ?2,
+            cron_expr = ?3,
+            enabled = ?4,
+            agent_role = ?5,
+            message = ?6,
+            payload_json = ?7,
+            next_run_at = ?8,
+            updated_at = ?9,
+            allowed_tools = ?10,
+            allowed_mcps = ?11,
+            skills = ?12
         WHERE id = ?1
         "#,
     )
     .bind(schedule_id)
+    .bind(name)
     .bind(cron_expr)
     .bind(if enabled { 1 } else { 0 })
+    .bind(agent_role)
+    .bind(message)
     .bind(to_json_string(&payload))
     .bind(next_run_at)
     .bind(now_rfc3339())
+    .bind(allowed_tools)
+    .bind(allowed_mcps)
+    .bind(skills)
     .execute(pool)
     .await?;
 
@@ -246,7 +294,18 @@ pub async fn update_schedule(
         .context("cannot fetch updated schedule")
 }
 
+pub async fn delete_schedule(pool: &SqlitePool, schedule_id: &str) -> Result<()> {
+    query("DELETE FROM schedules WHERE id = ?1")
+        .bind(schedule_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub fn to_schedule_view(row: ScheduleRow) -> ScheduleView {
+    let allowed_tools = parse_json_string_array(&row.allowed_tools);
+    let allowed_mcps = parse_json_string_array(&row.allowed_mcps);
+    let skills = parse_json_string_array(&row.skills);
     ScheduleView {
         id: row.id,
         name: row.name,
@@ -261,6 +320,9 @@ pub fn to_schedule_view(row: ScheduleRow) -> ScheduleView {
         message: row.message,
         last_status: row.last_status,
         last_result: row.last_result,
+        allowed_tools,
+        allowed_mcps,
+        skills,
     }
 }
 
@@ -323,6 +385,132 @@ pub async fn build_agent_statuses(pool: &SqlitePool) -> Result<Vec<AgentStatusVi
     }
 
     Ok(statuses)
+}
+
+// ─── Instruments ─────────────────────────────────────────────────────
+
+pub async fn list_instruments(pool: &SqlitePool) -> Result<Vec<InstrumentRow>> {
+    query_as::<_, InstrumentRow>("SELECT * FROM instruments ORDER BY symbol ASC")
+        .fetch_all(pool)
+        .await
+        .context("cannot list instruments")
+}
+
+pub async fn get_instrument(pool: &SqlitePool, symbol: &str) -> Result<Option<InstrumentRow>> {
+    query_as::<_, InstrumentRow>("SELECT * FROM instruments WHERE symbol = ?1")
+        .bind(symbol)
+        .fetch_optional(pool)
+        .await
+        .context("cannot fetch instrument")
+}
+
+pub async fn upsert_instrument(
+    pool: &SqlitePool,
+    symbol: &str,
+    request: &UpsertInstrumentRequest,
+) -> Result<InstrumentRow> {
+    let now = now_rfc3339();
+    let existing = get_instrument(pool, symbol).await?;
+
+    let name = request.name.clone().unwrap_or_else(|| {
+        existing.as_ref().map(|r| r.name.clone()).unwrap_or_default()
+    });
+    let category = request.category.clone().unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|r| r.category.clone())
+            .unwrap_or_else(|| "forex".to_string())
+    });
+    let direction = request.direction.clone().unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|r| r.direction.clone())
+            .unwrap_or_else(|| "neutral".to_string())
+    });
+    let confidence = request.confidence.unwrap_or_else(|| {
+        existing.as_ref().map(|r| r.confidence).unwrap_or(0.0)
+    });
+    let price = request.price.unwrap_or_else(|| {
+        existing.as_ref().map(|r| r.price).unwrap_or(0.0)
+    });
+    let change_pct = request.change_pct.unwrap_or_else(|| {
+        existing.as_ref().map(|r| r.change_pct).unwrap_or(0.0)
+    });
+    let timeframe = request.timeframe.clone().unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|r| r.timeframe.clone())
+            .unwrap_or_default()
+    });
+    let analysis = request.analysis.clone().unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|r| r.analysis.clone())
+            .unwrap_or_default()
+    });
+    let key_levels_json = request
+        .key_levels
+        .as_ref()
+        .map(to_json_string)
+        .unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|r| r.key_levels.clone())
+                .unwrap_or_else(|| "[]".to_string())
+        });
+
+    query(
+        r#"
+        INSERT INTO instruments (symbol, name, category, direction, confidence, price, change_pct, timeframe, analysis, key_levels, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(symbol) DO UPDATE SET
+          name = excluded.name,
+          category = excluded.category,
+          direction = excluded.direction,
+          confidence = excluded.confidence,
+          price = excluded.price,
+          change_pct = excluded.change_pct,
+          timeframe = excluded.timeframe,
+          analysis = excluded.analysis,
+          key_levels = excluded.key_levels,
+          updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(symbol)
+    .bind(&name)
+    .bind(&category)
+    .bind(&direction)
+    .bind(confidence)
+    .bind(price)
+    .bind(change_pct)
+    .bind(&timeframe)
+    .bind(&analysis)
+    .bind(&key_levels_json)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    query_as::<_, InstrumentRow>("SELECT * FROM instruments WHERE symbol = ?1")
+        .bind(symbol)
+        .fetch_one(pool)
+        .await
+        .context("cannot fetch upserted instrument")
+}
+
+pub fn to_instrument_view(row: InstrumentRow) -> InstrumentView {
+    InstrumentView {
+        symbol: row.symbol,
+        name: row.name,
+        category: row.category,
+        direction: row.direction,
+        confidence: row.confidence,
+        price: row.price,
+        change_pct: row.change_pct,
+        timeframe: row.timeframe,
+        analysis: row.analysis,
+        key_levels: from_json_value(&row.key_levels),
+        updated_at: row.updated_at,
+    }
 }
 
 #[cfg(test)]

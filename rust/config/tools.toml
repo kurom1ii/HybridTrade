@@ -1,22 +1,4 @@
 [[tools]]
-name = "extract_signals"
-kind = "native"
-enabled = true
-timeout_ms = 5000
-
-[[tools]]
-name = "memory_lookup"
-kind = "native"
-enabled = true
-timeout_ms = 3000
-
-[[tools]]
-name = "summarize_sources"
-kind = "native"
-enabled = true
-timeout_ms = 3000
-
-[[tools]]
 name = "read"
 kind = "native"
 enabled = true
@@ -45,3 +27,33 @@ name = "spawn_team"
 kind = "native"
 enabled = true
 timeout_ms = 180000
+
+[[tools]]
+name = "fetch_news"
+kind = "native"
+enabled = true
+timeout_ms = 20000
+
+[[tools]]
+name = "fetch_calendar"
+kind = "native"
+enabled = true
+timeout_ms = 20000
+
+[[tools]]
+name = "update_dashboard"
+kind = "native"
+enabled = true
+timeout_ms = 10000
+
+[[tools]]
+name = "fetch_dashboard"
+kind = "native"
+enabled = true
+timeout_ms = 10000
+
+[[tools]]
+name = "reusable_skills"
+kind = "native"
+enabled = true
+timeout_ms = 10000

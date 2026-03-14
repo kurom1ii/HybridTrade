@@ -12,6 +12,9 @@ export interface ScheduleView {
   message: string;
   last_status: string;
   last_result?: string | null;
+  allowed_tools?: string[] | null;
+  allowed_mcps?: string[] | null;
+  skills?: string[] | null;
 }
 
 export interface AgentStatusView {
@@ -36,4 +39,51 @@ export interface CreateSchedulePayload {
   agent_role: string;
   message: string;
   payload?: Record<string, unknown>;
+  allowed_tools?: string[] | null;
+  allowed_mcps?: string[] | null;
+  skills?: string[] | null;
+}
+
+export interface UpdateSchedulePayload {
+  name?: string;
+  cron_expr?: string;
+  enabled?: boolean;
+  agent_role?: string;
+  message?: string;
+  payload?: Record<string, unknown>;
+  allowed_tools?: string[] | null;
+  allowed_mcps?: string[] | null;
+  skills?: string[] | null;
+}
+
+export interface CapabilitiesView {
+  tools: string[];
+  mcps: string[];
+  skills: string[];
+}
+
+export interface InstrumentView {
+  symbol: string;
+  name: string;
+  category: string;
+  direction: string;
+  confidence: number;
+  price: number;
+  change_pct: number;
+  timeframe: string;
+  analysis: string;
+  key_levels: { price: number; label: string; type: string }[];
+  updated_at: string;
+}
+
+export interface UpsertInstrumentPayload {
+  name?: string;
+  category?: string;
+  direction?: string;
+  confidence?: number;
+  price?: number;
+  change_pct?: number;
+  timeframe?: string;
+  analysis?: string;
+  key_levels?: { price: number; label: string; type: string }[];
 }
