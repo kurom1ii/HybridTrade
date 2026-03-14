@@ -10,31 +10,26 @@ use axum::{
     routing::{get, patch, post},
     Json, Router,
 };
-use futures_util::{stream, Stream, StreamExt};
+use futures_util::{Stream, StreamExt};
 use serde_json::json;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
     agents::{
-        AgentChatOptions, AgentPromptContext, AgentRole, ChatStreamEvent, DebugAgentChatRequest,
+        AgentChatOptions, AgentRole, ChatStreamEvent, DebugAgentChatRequest,
         DebugAgentView, ProviderStatusView,
     },
     db, AppState,
 };
 
+use tracing::info;
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/dashboard", get(dashboard))
-        .route(
-            "/api/investigations",
-            get(list_investigations).post(create_investigation),
-        )
-        .route("/api/investigations/:id", get(get_investigation))
-        .route("/api/investigations/:id/stream", get(stream_investigation))
         .route("/api/agents/status", get(agent_status))
-        .route("/api/heartbeats", get(heartbeats))
         .route("/api/schedules", get(list_schedules).post(create_schedule))
         .route("/api/schedules/:id", patch(update_schedule))
         .route("/api/debug/providers", get(debug_providers))
@@ -58,61 +53,20 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
 async fn dashboard(
     State(state): State<Arc<AppState>>,
 ) -> AppResult<Json<crate::models::DashboardResponse>> {
-    Ok(Json(db::build_dashboard(&state.db).await?))
-}
-
-async fn list_investigations(
-    State(state): State<Arc<AppState>>,
-) -> AppResult<Json<Vec<crate::models::InvestigationSummary>>> {
-    let items = db::list_investigation_rows(&state.db)
-        .await?
-        .into_iter()
-        .map(db::to_investigation_summary)
-        .collect();
-    Ok(Json(items))
-}
-
-async fn create_investigation(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<crate::models::CreateInvestigationRequest>,
-) -> AppResult<(StatusCode, Json<crate::models::InvestigationDetail>)> {
-    if request.topic.trim().is_empty() {
-        return Err(AppError::bad_request("topic is required"));
-    }
-
-    let row = db::create_investigation(&state.db, &state.config, request).await?;
-    let detail = db::build_investigation_detail(&state.db, &row.id).await?;
-    state.events.publish(
-        "investigation.updated",
-        Some(row.id.clone()),
-        &detail.investigation,
-    );
-    Ok((StatusCode::CREATED, Json(detail)))
-}
-
-async fn get_investigation(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> AppResult<Json<crate::models::InvestigationDetail>> {
-    ensure_investigation(&state, &id).await?;
-    Ok(Json(db::build_investigation_detail(&state.db, &id).await?))
+    info!("[DASHBOARD] GET /api/dashboard — request received");
+    let resp = db::build_dashboard(&state.db).await?;
+    Ok(Json(resp))
 }
 
 async fn agent_status(
     State(state): State<Arc<AppState>>,
 ) -> AppResult<Json<Vec<crate::models::AgentStatusView>>> {
-    Ok(Json(db::build_agent_statuses(&state.db).await?))
-}
-
-async fn heartbeats(
-    State(state): State<Arc<AppState>>,
-) -> AppResult<Json<Vec<crate::models::HeartbeatView>>> {
-    let items = db::list_heartbeats(&state.db)
-        .await?
-        .into_iter()
-        .map(db::to_heartbeat_view)
-        .collect();
-    Ok(Json(items))
+    info!("[AGENT] GET /api/agents/status — request received");
+    let statuses = db::build_agent_statuses(&state.db).await?;
+    for s in &statuses {
+        info!("[AGENT]   {} ({}) — status={} open_runs={}", s.label, s.role, s.status, s.open_runs);
+    }
+    Ok(Json(statuses))
 }
 
 async fn list_schedules(
@@ -130,6 +84,8 @@ async fn create_schedule(
     State(state): State<Arc<AppState>>,
     Json(request): Json<crate::models::CreateScheduleRequest>,
 ) -> AppResult<(StatusCode, Json<crate::models::ScheduleView>)> {
+    info!("[SCHEDULE] POST /api/schedules — name='{}' cron='{}' type='{}'",
+        request.name, request.cron_expr, request.job_type);
     if request.name.trim().is_empty()
         || request.cron_expr.trim().is_empty()
         || request.job_type.trim().is_empty()
@@ -143,7 +99,6 @@ async fn create_schedule(
     let view = db::to_schedule_view(row);
     state.events.publish(
         "job.status",
-        None,
         &json!({ "schedule": view.name, "status": "created" }),
     );
     Ok((StatusCode::CREATED, Json(view)))
@@ -201,19 +156,18 @@ async fn debug_agent_chat(
     Path(role): Path<String>,
     Json(request): Json<DebugAgentChatRequest>,
 ) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    info!("[AGENT-CHAT] POST /api/debug/agents/{}/chat — message='{}'", role, &request.message[..request.message.len().min(100)]);
     if request.message.trim().is_empty() {
         return Err(AppError::bad_request("message là bắt buộc"));
     }
 
     let agent_role = AgentRole::from_str(&role).map_err(AppError::bad_request)?;
+    info!("[AGENT-CHAT] Agent role={} label={}", agent_role.as_str(), agent_role.label());
     if !AgentRole::visible_agents().contains(&agent_role) {
         return Err(AppError::bad_request("agent này không hỗ trợ debug chat"));
     }
-    let context = if request.include_backend_context.unwrap_or(true) {
-        load_backend_context(&state, request.investigation_id.as_deref()).await?
-    } else {
-        None
-    };
+
+    let context = None;
 
     let (tx, rx) = mpsc::unbounded_channel::<ChatStreamEvent>();
     let _ = tx.send(ChatStreamEvent::Connected);
@@ -251,131 +205,6 @@ async fn debug_agent_chat(
         Ok(Event::default().data(serde_json::to_string(&event).unwrap_or_default()))
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
-}
-
-async fn stream_investigation(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    ensure_investigation(&state, &id).await?;
-
-    let receiver = state.events.subscribe();
-    let stream_id = id.clone();
-    let live_stream = BroadcastStream::new(receiver).filter_map(move |item| {
-        let target = stream_id.clone();
-        async move {
-            match item.ok() {
-                Some(event) if event.investigation_id.as_deref() == Some(target.as_str()) => {
-                    let payload = serde_json::to_string(&event).ok()?;
-                    Some(Ok(Event::default().event(event.event_type).data(payload)))
-                }
-                _ => None,
-            }
-        }
-    });
-
-    let init = stream::once(async move {
-        Ok(Event::default().event("heartbeat").data(
-            json!({
-                "event_type": "heartbeat",
-                "investigation_id": id,
-                "payload": { "message": "stream-connected" },
-                "timestamp": db::now_rfc3339(),
-            })
-            .to_string(),
-        ))
-    });
-
-    Ok(Sse::new(init.chain(live_stream))
-        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10))))
-}
-
-async fn load_backend_context(
-    state: &AppState,
-    investigation_id: Option<&str>,
-) -> AppResult<Option<AgentPromptContext>> {
-    let Some(investigation_id) = investigation_id else {
-        return Ok(None);
-    };
-
-    ensure_investigation(state, investigation_id).await?;
-    let detail = db::build_investigation_detail(&state.db, investigation_id).await?;
-
-    let findings = detail
-        .findings
-        .iter()
-        .take(3)
-        .map(|finding| {
-            format!(
-                "- {} [{}]: {}",
-                finding.title,
-                finding
-                    .direction
-                    .clone()
-                    .unwrap_or_else(|| finding.kind.clone()),
-                finding.summary
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let sections = detail
-        .sections
-        .iter()
-        .map(|section| {
-            format!(
-                "- {} ({}): {}",
-                section.title,
-                section.status,
-                section
-                    .conclusion
-                    .clone()
-                    .unwrap_or_else(|| "Chưa có".to_string())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let preview = format!(
-        "Investigation: {}\nStatus: {}\nGoal: {}\nSummary: {}\n\nSections:\n{}\n\nFindings:\n{}",
-        detail.investigation.topic,
-        detail.investigation.status,
-        detail.investigation.goal,
-        detail
-            .investigation
-            .summary
-            .clone()
-            .unwrap_or_else(|| "Chưa có".to_string()),
-        truncate_text(&sections, 1400),
-        if findings.is_empty() {
-            "Chưa có findings".to_string()
-        } else {
-            truncate_text(&findings, 1400)
-        }
-    );
-
-    Ok(Some(AgentPromptContext {
-        investigation_id: Some(investigation_id.to_string()),
-        preview: Some(preview),
-    }))
-}
-
-fn truncate_text(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-
-    value.chars().take(max_chars).collect::<String>() + "..."
-}
-
-async fn ensure_investigation(state: &AppState, investigation_id: &str) -> AppResult<()> {
-    if db::investigation_exists(&state.db, investigation_id).await? {
-        Ok(())
-    } else {
-        Err(AppError::not_found(format!(
-            "investigation {investigation_id} not found"
-        )))
-    }
 }
 
 async fn ensure_schedule(state: &AppState, schedule_id: &str) -> AppResult<()> {

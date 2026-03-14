@@ -149,6 +149,13 @@ impl ToolRuntime {
         self.stream_label = Some(label);
     }
 
+    pub(crate) fn set_stream_sender(
+        &mut self,
+        sender: mpsc::UnboundedSender<ChatStreamEvent>,
+    ) {
+        self.stream_sender = Some(sender);
+    }
+
     pub(crate) fn clear_stream_state(&mut self) {
         self.team_orchestrator = None;
         self.stream_sender = None;
@@ -157,6 +164,21 @@ impl ToolRuntime {
 
     pub(crate) async fn execute(&mut self, name: &str, arguments: Value) -> String {
         let arguments = sanitize_tool_arguments(arguments);
+        let is_team_context = self.stream_label.is_some();
+
+        // Emit pre-execution event for main agent context (agentic loop)
+        if !is_team_context {
+            if let Some(tx) = &self.stream_sender {
+                let input_preview = truncate_chars(
+                    &serde_json::to_string(&arguments).unwrap_or_default(),
+                    200,
+                );
+                let _ = tx.send(ChatStreamEvent::AgentToolCall {
+                    tool: name.to_string(),
+                    input_preview,
+                });
+            }
+        }
 
         let Some(definition) = self.tools.get(name).cloned() else {
             let output = json!({
@@ -171,14 +193,7 @@ impl ToolRuntime {
                 input: arguments,
                 output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
             });
-            if let Some(tx) = &self.stream_sender {
-                let _ = tx.send(ChatStreamEvent::TeamToolCall {
-                    member: self.stream_label.clone().unwrap_or_default(),
-                    tool: name.to_string(),
-                    status: "failed".to_string(),
-                    output_preview: truncate_chars(&output_text, 200),
-                });
-            }
+            self.emit_tool_result_event(is_team_context, name, "failed", &output_text);
             return output_text;
         };
 
@@ -201,14 +216,12 @@ impl ToolRuntime {
                     input: arguments,
                     output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
                 });
-                if let Some(tx) = &self.stream_sender {
-                    let _ = tx.send(ChatStreamEvent::TeamToolCall {
-                        member: self.stream_label.clone().unwrap_or_default(),
-                        tool: definition.name.clone(),
-                        status: status.to_string(),
-                        output_preview: truncate_chars(&output_text, 200),
-                    });
-                }
+                self.emit_tool_result_event(
+                    is_team_context,
+                    &definition.name,
+                    status,
+                    &output_text,
+                );
                 output_text
             }
             Err(error) => {
@@ -224,16 +237,40 @@ impl ToolRuntime {
                     input: arguments,
                     output_preview: truncate_chars(&output_text, MAX_TOOL_PREVIEW_CHARS),
                 });
-                if let Some(tx) = &self.stream_sender {
-                    let _ = tx.send(ChatStreamEvent::TeamToolCall {
-                        member: self.stream_label.clone().unwrap_or_default(),
-                        tool: definition.name.clone(),
-                        status: "failed".to_string(),
-                        output_preview: truncate_chars(&output_text, 200),
-                    });
-                }
+                self.emit_tool_result_event(
+                    is_team_context,
+                    &definition.name,
+                    "failed",
+                    &output_text,
+                );
                 output_text
             }
+        }
+    }
+
+    fn emit_tool_result_event(
+        &self,
+        is_team_context: bool,
+        tool_name: &str,
+        status: &str,
+        output_text: &str,
+    ) {
+        let Some(tx) = &self.stream_sender else {
+            return;
+        };
+        if is_team_context {
+            let _ = tx.send(ChatStreamEvent::TeamToolCall {
+                member: self.stream_label.clone().unwrap_or_default(),
+                tool: tool_name.to_string(),
+                status: status.to_string(),
+                output_preview: truncate_chars(output_text, 200),
+            });
+        } else {
+            let _ = tx.send(ChatStreamEvent::AgentToolResult {
+                tool: tool_name.to_string(),
+                status: status.to_string(),
+                output_preview: truncate_chars(output_text, 200),
+            });
         }
     }
 

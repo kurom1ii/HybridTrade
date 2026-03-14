@@ -54,7 +54,6 @@ struct CachedChatRuntime {
 
 #[derive(Debug, Clone)]
 pub struct AgentPromptContext {
-    pub investigation_id: Option<String>,
     pub preview: Option<String>,
 }
 
@@ -205,20 +204,6 @@ impl ProviderHub {
         }
         let api_key = provider_api_key(&config);
 
-        if let (Some(tx), Some(light_cfg)) = (&stream_tx, config.light_config()) {
-            self.emit_pre_response(
-                provider,
-                &light_cfg,
-                api_key.as_deref(),
-                &turn_skills.clean_message,
-                tx,
-            )
-            .await;
-        }
-
-        let investigation_id = context
-            .as_ref()
-            .and_then(|item| item.investigation_id.clone());
         let context_preview = context.as_ref().and_then(|item| item.preview.clone());
         let normalized_history = normalize_history(&history);
         let chat_session_id = normalize_chat_session_id(chat_session_id);
@@ -242,7 +227,6 @@ impl ProviderHub {
                     api_key.as_deref(),
                     context.as_ref(),
                     context_preview,
-                    investigation_id,
                     Some(session_id),
                     &turn_skills,
                     &normalized_history,
@@ -266,7 +250,6 @@ impl ProviderHub {
             api_key.as_deref(),
             context.as_ref(),
             context_preview,
-            investigation_id,
             None,
             &turn_skills,
             &normalized_history,
@@ -283,7 +266,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         message: &str,
         compacted: &HistoryCompaction,
@@ -293,7 +275,6 @@ impl ProviderHub {
             agent_role,
             provider,
             model,
-            investigation_id,
             chat_session_id,
             message,
             compacted,
@@ -314,7 +295,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         message: &str,
         compacted: &HistoryCompaction,
@@ -331,11 +311,6 @@ impl ProviderHub {
             writeln!(file, "provider: {}", provider.name())?;
             writeln!(file, "model: {model}")?;
             writeln!(file, "attempt: {attempt}")?;
-            writeln!(
-                file,
-                "investigation_id: {}",
-                investigation_id.unwrap_or("-")
-            )?;
             writeln!(file, "chat_session_id: {}", chat_session_id.unwrap_or("-"))?;
             writeln!(
                 file,
@@ -364,7 +339,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         message: &str,
         command: Option<&str>,
@@ -374,7 +348,6 @@ impl ProviderHub {
             agent_role,
             provider,
             model,
-            investigation_id,
             chat_session_id,
             message,
             command,
@@ -393,7 +366,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         message: &str,
         command: Option<&str>,
@@ -407,11 +379,6 @@ impl ProviderHub {
             writeln!(file, "agent_role: {}", agent_role.as_str())?;
             writeln!(file, "provider: {}", provider.name())?;
             writeln!(file, "model: {model}")?;
-            writeln!(
-                file,
-                "investigation_id: {}",
-                investigation_id.unwrap_or("-")
-            )?;
             writeln!(file, "chat_session_id: {}", chat_session_id.unwrap_or("-"))?;
             writeln!(file, "command: {}", command.unwrap_or("-"))?;
             writeln!(file, "skills: [{}]", active_skills.join(", "))?;
@@ -429,7 +396,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         command: Option<&str>,
         active_skills: &[String],
@@ -444,7 +410,6 @@ impl ProviderHub {
             agent_role,
             provider,
             model,
-            investigation_id,
             chat_session_id,
             command,
             active_skills,
@@ -469,7 +434,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         command: Option<&str>,
         active_skills: &[String],
@@ -492,11 +456,6 @@ impl ProviderHub {
             writeln!(file, "provider: {}", provider.name())?;
             writeln!(file, "model: {model}")?;
             writeln!(file, "attempt: {attempt}")?;
-            writeln!(
-                file,
-                "investigation_id: {}",
-                investigation_id.unwrap_or("-")
-            )?;
             writeln!(file, "chat_session_id: {}", chat_session_id.unwrap_or("-"))?;
             writeln!(file, "command: {}", command.unwrap_or("-"))?;
             writeln!(file, "skills: [{}]", active_skills.join(", "))?;
@@ -544,7 +503,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         content: &str,
         tool_runtime: &ToolRuntime,
@@ -553,7 +511,6 @@ impl ProviderHub {
             agent_role,
             provider,
             model,
-            investigation_id,
             chat_session_id,
             content,
             tool_runtime,
@@ -571,7 +528,6 @@ impl ProviderHub {
         agent_role: AgentRole,
         provider: ProviderKind,
         model: &str,
-        investigation_id: Option<&str>,
         chat_session_id: Option<&str>,
         content: &str,
         tool_runtime: &ToolRuntime,
@@ -593,11 +549,6 @@ impl ProviderHub {
             writeln!(file, "agent_role: {}", agent_role.as_str())?;
             writeln!(file, "provider: {}", provider.name())?;
             writeln!(file, "model: {model}")?;
-            writeln!(
-                file,
-                "investigation_id: {}",
-                investigation_id.unwrap_or("-")
-            )?;
             writeln!(file, "chat_session_id: {}", chat_session_id.unwrap_or("-"))?;
             writeln!(file, "tool_calls_count: {}", tool_calls.len())?;
             writeln!(file, "tool_calls: [{}]", tool_names.join(", "))?;
@@ -656,7 +607,6 @@ impl ProviderHub {
         api_key: Option<&str>,
         context: Option<&AgentPromptContext>,
         context_preview: Option<String>,
-        investigation_id: Option<String>,
         chat_session_id: Option<String>,
         turn_skills: &TurnSkillContext,
         history: &[ChatTurn],
@@ -676,12 +626,19 @@ impl ProviderHub {
         let runtime_continuity_note = build_runtime_continuity_note(tool_runtime.tool_calls());
 
         tool_runtime.prepare_turn(&effective_history, context_preview.clone());
+
+        // Wire stream to tool_runtime for agentic loop events
+        if let Some(tx) = &stream_tx {
+            tool_runtime.set_stream_sender(tx.clone());
+        }
+
+        // Team orchestrator — subagent dùng isolated browser instance riêng.
         tool_runtime.attach_team_orchestrator(self.team_orchestrator(
             provider,
             config,
             api_key,
             turn_skills.active_skills.clone(),
-            stream_tx,
+            stream_tx.clone(),
         ));
 
         let system_prompt =
@@ -698,7 +655,6 @@ impl ProviderHub {
             agent_role,
             provider,
             &config.model,
-            investigation_id.as_deref(),
             chat_session_id.as_deref(),
             &turn_skills.clean_message,
             &compacted,
@@ -709,7 +665,6 @@ impl ProviderHub {
             agent_role,
             provider,
             &config.model,
-            investigation_id.as_deref(),
             chat_session_id.as_deref(),
             &provider_message,
             turn_skills.command.as_deref(),
@@ -720,7 +675,6 @@ impl ProviderHub {
             agent_role,
             provider,
             &config.model,
-            investigation_id.as_deref(),
             chat_session_id.as_deref(),
             turn_skills.command.as_deref(),
             &active_skill_names,
@@ -731,6 +685,13 @@ impl ProviderHub {
             tool_runtime,
             "normal",
         );
+
+        // Emit thinking event — report main model (first call uses this)
+        if let Some(tx) = &stream_tx {
+            let _ = tx.send(ChatStreamEvent::AgentThinking {
+                model: config.model.clone(),
+            });
+        }
 
         let mut call_result = call_provider(
             &self.client,
@@ -761,7 +722,6 @@ impl ProviderHub {
                         agent_role,
                         provider,
                         &config.model,
-                        investigation_id.as_deref(),
                         chat_session_id.as_deref(),
                         &turn_skills.clean_message,
                         &retry_compacted,
@@ -772,7 +732,6 @@ impl ProviderHub {
                         agent_role,
                         provider,
                         &config.model,
-                        investigation_id.as_deref(),
                         chat_session_id.as_deref(),
                         turn_skills.command.as_deref(),
                         &active_skill_names,
@@ -829,7 +788,6 @@ impl ProviderHub {
             agent_role,
             provider,
             &config.model,
-            investigation_id.as_deref(),
             chat_session_id.as_deref(),
             &content,
             tool_runtime,
@@ -842,7 +800,6 @@ impl ProviderHub {
             provider: provider.name().to_string(),
             model: config.model.clone(),
             content,
-            investigation_id,
             chat_session_id,
             debug: DebugAgentChatDebug {
                 system_prompt: compacted.system_prompt,
@@ -867,47 +824,6 @@ impl ProviderHub {
         match provider_name {
             Some(name) if !name.trim().is_empty() => ProviderKind::parse(name),
             _ => ProviderKind::parse(&self.config.default.chat),
-        }
-    }
-
-    async fn emit_pre_response(
-        &self,
-        provider: ProviderKind,
-        light_config: &ProviderConfig,
-        api_key: Option<&str>,
-        user_message: &str,
-        tx: &mpsc::UnboundedSender<ChatStreamEvent>,
-    ) {
-        let system = "Bạn là assistant nhẹ. Nhiệm vụ duy nhất: đọc tin nhắn user, trả 1-2 câu ngắn xác nhận bạn hiểu yêu cầu gì và sẽ dùng tool/cách nào. Không thực hiện, không dùng tool, chỉ nói ngắn kiểu: \"Ok, để tôi mở Google bằng CDP.\" hoặc \"Tôi sẽ phân tích EUR/USD qua dữ liệu macro.\" Giữ dưới 40 từ.";
-
-        let mut dummy_runtime = self
-            .capabilities
-            .tool_runtime_native_only(&[], None)
-            .await;
-        dummy_runtime.remove_definition("spawn_team");
-
-        match call_provider(
-            &self.client,
-            provider,
-            light_config,
-            api_key,
-            system,
-            &[],
-            user_message,
-            Some(200),
-            Some(0.3),
-            &mut dummy_runtime,
-        )
-        .await
-        {
-            Ok(content) => {
-                let _ = tx.send(ChatStreamEvent::PreResponse {
-                    content: content.trim().to_string(),
-                });
-            }
-            Err(error) => {
-                tracing::debug!(error = %error, "pre-response call failed, skipping");
-            }
         }
     }
 

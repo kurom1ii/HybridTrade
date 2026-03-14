@@ -6,8 +6,17 @@ use std::str::FromStr;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatStreamEvent {
     Connected,
-    PreResponse {
-        content: String,
+    AgentThinking {
+        model: String,
+    },
+    AgentToolCall {
+        tool: String,
+        input_preview: String,
+    },
+    AgentToolResult {
+        tool: String,
+        status: String,
+        output_preview: String,
     },
     TeamStarted {
         mission: String,
@@ -140,7 +149,6 @@ pub struct ChatTurn {
 pub struct DebugAgentChatRequest {
     pub message: String,
     pub provider: Option<String>,
-    pub investigation_id: Option<String>,
     pub chat_session_id: Option<String>,
     #[serde(default)]
     pub history: Vec<ChatTurn>,
@@ -186,7 +194,6 @@ pub struct DebugAgentChatResponse {
     pub provider: String,
     pub model: String,
     pub content: String,
-    pub investigation_id: Option<String>,
     pub chat_session_id: Option<String>,
     pub debug: DebugAgentChatDebug,
 }

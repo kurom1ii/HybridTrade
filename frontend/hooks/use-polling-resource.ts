@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useEffectEvent, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 
 interface UsePollingOptions {
   enabled?: boolean;
@@ -12,27 +12,32 @@ export function usePollingResource<T>(
   loader: () => Promise<T>,
   options?: UsePollingOptions,
 ) {
-  const { enabled = true, intervalMs = 15_000 } = options ?? {};
+  const { enabled = true, intervalMs = 0 } = options ?? {};
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
+  const inFlight = useRef(false);
 
-  const runLoad = useEffectEvent(async () => {
-    if (!enabled) return;
+  const runLoad = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     try {
-      const nextData = await loader();
+      const nextData = await loaderRef.current();
       startTransition(() => {
         setData(nextData);
         setError(null);
       });
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : "Khong the tai du lieu";
+      const message = loadError instanceof Error ? loadError.message : "Không thể tải dữ liệu";
       setError(message);
     } finally {
       setLoading(false);
+      inFlight.current = false;
     }
-  });
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
@@ -40,11 +45,17 @@ export function usePollingResource<T>(
       return;
     }
 
+    // Fetch once on mount
     void runLoad();
+
+    // Optional polling (only if intervalMs > 0)
     if (intervalMs <= 0) return;
 
     const timer = window.setInterval(() => {
-      void runLoad();
+      // Only poll when tab is visible
+      if (!document.hidden) {
+        void runLoad();
+      }
     }, intervalMs);
     return () => window.clearInterval(timer);
   }, [enabled, intervalMs, key, runLoad]);
@@ -53,9 +64,6 @@ export function usePollingResource<T>(
     data,
     loading,
     error,
-    reload: () => {
-      void runLoad();
-    },
+    reload: runLoad,
   };
 }
-

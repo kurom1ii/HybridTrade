@@ -5,13 +5,7 @@ use futures_util::future::join_all;
 use reqwest::Client;
 use tokio::sync::mpsc;
 
-use crate::{
-    agents::{
-        models::ChatStreamEvent,
-        tool_runtime::runtime::ToolRuntime,
-    },
-    config::ProviderConfig,
-};
+use crate::{agents::models::ChatStreamEvent, config::ProviderConfig};
 
 use super::{
     super::{
@@ -29,13 +23,14 @@ use super::{
     },
 };
 
+use crate::agents::tool_runtime::runtime::ToolRuntime;
+
 #[derive(Clone)]
 pub(crate) struct TeamOrchestrator {
     client: Client,
     capabilities: CapabilityCatalog,
     provider: ProviderKind,
     provider_config: ProviderConfig,
-    light_config: Option<ProviderConfig>,
     api_key: Option<String>,
     active_skills: Vec<ActiveSkill>,
     stream_sender: Option<mpsc::UnboundedSender<ChatStreamEvent>>,
@@ -56,13 +51,11 @@ impl TeamOrchestrator {
         active_skills: Vec<ActiveSkill>,
         stream_sender: Option<mpsc::UnboundedSender<ChatStreamEvent>>,
     ) -> Self {
-        let light_config = provider_config.light_config();
         Self {
             client,
             capabilities,
             provider,
             provider_config,
-            light_config,
             api_key,
             active_skills,
             stream_sender,
@@ -88,7 +81,7 @@ impl TeamOrchestrator {
                 members: request.members.iter().map(|m| m.name.clone()).collect(),
             });
 
-            // Mỗi subagent được cấp một runtime đầy đủ riêng biệt (native + MCP)
+            // Mỗi subagent được cấp runtime đầy đủ riêng biệt (native + MCP)
             // với Chrome DevTools chạy `--isolated` để có browser instance độc lập.
             let mut member_states = Vec::with_capacity(request.members.len());
             for member in request.members.iter().cloned() {
@@ -106,11 +99,7 @@ impl TeamOrchestrator {
             let mut transcript = Vec::new();
             for round_index in 0..request.rounds {
                 let is_last_round = round_index + 1 == request.rounds;
-                let round_config = if is_last_round {
-                    &self.provider_config
-                } else {
-                    self.light_config.as_ref().unwrap_or(&self.provider_config)
-                };
+                let round_config = &self.provider_config;
                 let round_label = if is_last_round { "execute" } else { "discuss" };
 
                 self.emit(ChatStreamEvent::TeamRound {
@@ -167,7 +156,7 @@ impl TeamOrchestrator {
                             Some(if is_final {
                                 round_config.max_tokens
                             } else {
-                                round_config.max_tokens.min(900)
+                                round_config.max_tokens.min(4096)
                             }),
                             Some(round_config.temperature),
                             &mut state.runtime,

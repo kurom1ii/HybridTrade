@@ -6,12 +6,8 @@ frontend_origin = "http://127.0.0.1:3000"
 [database]
 path = "./data/hybridtrade.db"
 
-[heartbeat]
-api_interval_seconds = 10
-api_ttl_seconds = 30
-scheduler_interval_seconds = 5
-scheduler_ttl_seconds = 20
-agent_ttl_seconds = 120
+[scheduler]
+interval_seconds = 30
 
 [orchestration]
 default_source_scope = "public_web"
@@ -42,8 +38,10 @@ temperature = 0.2
 enabled = true
 base_url = "http://localhost:4141"
 model = "claude-opus-4.6"
-light_model = "claude-haiku-4.5"
+light_model = "claude-sonnet-4.6"
 request_retries = 3
 retry_backoff_ms = 1500
-max_tokens = 128000
+max_tokens = 64000
 temperature = 0.2
+thinking = true
+thinking_budget_tokens = 32000

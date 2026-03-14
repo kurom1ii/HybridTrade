@@ -5,13 +5,6 @@ import { useRef } from "react";
 
 const markets = [
   { pair: "XAU/USD", name: "Gold", price: "2,178.40", change: "+0.89%", type: "profit" },
-  { pair: "WTI/USD", name: "Crude Oil", price: "78.45", change: "-0.67%", type: "loss" },
-  { pair: "US30", name: "Dow Jones", price: "39,142", change: "+0.34%", type: "profit" },
-  { pair: "EUR/USD", name: "Euro", price: "1.0847", change: "+0.24%", type: "profit" },
-  { pair: "GBP/USD", name: "Pound", price: "1.2634", change: "+0.18%", type: "profit" },
-  { pair: "USD/JPY", name: "Yen", price: "149.82", change: "-0.31%", type: "loss" },
-  { pair: "BTC/USD", name: "Bitcoin", price: "67,842", change: "+2.14%", type: "profit" },
-  { pair: "XAG/USD", name: "Silver", price: "24.82", change: "+1.24%", type: "profit" },
 ];
 
 const features = [

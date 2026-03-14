@@ -5,7 +5,6 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, Serialize)]
 pub struct AppEvent {
     pub event_type: String,
-    pub investigation_id: Option<String>,
     pub payload: Value,
     pub timestamp: String,
 }
@@ -24,13 +23,11 @@ impl EventBus {
     pub fn publish<T: Serialize>(
         &self,
         event_type: &str,
-        investigation_id: Option<String>,
         payload: &T,
     ) {
         let payload = serde_json::to_value(payload).unwrap_or_else(|_| serde_json::json!({}));
         let _ = self.tx.send(AppEvent {
             event_type: event_type.to_string(),
-            investigation_id,
             payload,
             timestamp: crate::db::now_rfc3339(),
         });

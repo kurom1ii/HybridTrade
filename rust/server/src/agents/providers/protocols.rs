@@ -180,18 +180,50 @@ async fn call_anthropic(
         }
     };
 
+    // Agentic loop with dual-model:
+    // - First call: main model (Opus) for deep reasoning + tool decisions
+    // - Subsequent calls: light model (Sonnet) with thinking for quality tool processing
+    let tool_model = if config.light_model.trim().is_empty() {
+        config.model.clone()
+    } else {
+        config.light_model.clone()
+    };
+
+    let mut is_first_call = true;
+
     loop {
+        let active_model = if is_first_call {
+            &config.model
+        } else {
+            &tool_model
+        };
+
+        let effective_max = max_tokens.unwrap_or(config.max_tokens);
         let mut payload = json!({
-            "model": config.model,
+            "model": active_model,
             "system": system_prompt,
             "messages": messages.clone(),
-            "max_tokens": max_tokens.unwrap_or(config.max_tokens),
+            "max_tokens": effective_max,
         });
+
+        // Enable thinking for all calls — Opus lần đầu suy luận sâu,
+        // Sonnet các lần sau cũng cần thinking để xử lý tool result chính xác.
+        if config.thinking
+            && effective_max > config.thinking_budget_tokens
+            && config.thinking_budget_tokens >= 1024
+        {
+            payload["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": config.thinking_budget_tokens,
+            });
+        }
 
         if let Some(tools) = &tools_value {
             payload["tools"] = tools.clone();
             payload["tool_choice"] = json!({ "type": "auto" });
         }
+
+        is_first_call = false;
 
         let response = send_anthropic_request(client, config, api_key, &payload).await?;
 

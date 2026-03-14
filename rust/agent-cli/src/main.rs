@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     collections::BTreeSet,
     io::{self, Write},
+    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
@@ -54,9 +55,6 @@ struct ChatArgs {
         help = "Provider muốn ép dùng, ví dụ openai hoặc anthropic"
     )]
     provider: Option<String>,
-
-    #[arg(long, short = 'i', help = "ID investigation để backend nhúng ngữ cảnh")]
-    investigation_id: Option<String>,
 
     #[arg(long, help = "ID chat session để giữ MCP/CDP state xuyên nhiều lượt")]
     chat_session_id: Option<String>,
@@ -121,7 +119,6 @@ struct ChatTurn {
 struct DebugAgentChatRequest {
     message: String,
     provider: Option<String>,
-    investigation_id: Option<String>,
     chat_session_id: Option<String>,
     history: Vec<ChatTurn>,
     include_backend_context: Option<bool>,
@@ -174,7 +171,6 @@ struct DebugAgentChatResponse {
     provider: String,
     model: String,
     content: String,
-    investigation_id: Option<String>,
     chat_session_id: Option<String>,
     debug: DebugAgentChatDebug,
 }
@@ -189,8 +185,17 @@ struct ApiError {
 #[allow(dead_code)]
 enum ChatStreamEvent {
     Connected,
-    PreResponse {
-        content: String,
+    AgentThinking {
+        model: String,
+    },
+    AgentToolCall {
+        tool: String,
+        input_preview: String,
+    },
+    AgentToolResult {
+        tool: String,
+        status: String,
+        output_preview: String,
     },
     TeamStarted {
         mission: String,
@@ -232,7 +237,7 @@ struct BackendClient {
 impl BackendClient {
     fn new(base_url: String) -> Result<Self> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(15))
             .build()
             .context("không thể khởi tạo HTTP client")?;
 
@@ -279,20 +284,53 @@ impl BackendClient {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut final_response: Option<DebugAgentChatResponse> = None;
+        let mut has_tool_activity = false;
+        let chunk_timeout = Duration::from_secs(300); // 5 min per chunk
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("lỗi đọc SSE stream")?;
+        loop {
+            let chunk = match tokio::time::timeout(chunk_timeout, stream.next()).await {
+                Ok(Some(chunk)) => chunk.context("lỗi đọc SSE stream")?,
+                Ok(None) => break, // stream ended
+                Err(_) => bail!("SSE stream timeout: không nhận được dữ liệu trong 5 phút"),
+            };
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
             while let Some(event) = extract_sse_event(&mut buffer) {
                 match serde_json::from_str::<ChatStreamEvent>(&event) {
                     Ok(ChatStreamEvent::Connected) => {}
-                    Ok(ChatStreamEvent::PreResponse { content }) => {
-                        println!();
-                        println!(">> {}", content);
-                        println!();
+                    Ok(ChatStreamEvent::AgentThinking { model }) => {
+                        print!("\x1b[2m⟡ Thinking ({})\x1b[0m", model);
+                        io::stdout().flush().ok();
+                    }
+                    Ok(ChatStreamEvent::AgentToolCall { tool, input_preview }) => {
+                        // Clear thinking status line on first tool call
+                        if !has_tool_activity {
+                            print!("\r\x1b[2K");
+                            has_tool_activity = true;
+                        }
+                        let preview = single_line_preview(&input_preview, 80);
+                        println!(
+                            "\x1b[33m  → {}\x1b[2m({})\x1b[0m",
+                            tool, preview
+                        );
+                    }
+                    Ok(ChatStreamEvent::AgentToolResult {
+                        tool,
+                        status,
+                        output_preview,
+                    }) => {
+                        let preview = single_line_preview(&output_preview, 100);
+                        let color = if status == "completed" { "32" } else { "31" };
+                        println!(
+                            "\x1b[{}m  ← {} [{}]\x1b[2m {}\x1b[0m",
+                            color, tool, status, preview,
+                        );
                     }
                     Ok(ChatStreamEvent::TeamStarted { mission, members }) => {
+                        if !has_tool_activity {
+                            print!("\r\x1b[2K");
+                            has_tool_activity = true;
+                        }
                         println!();
                         println!("=== Team: {} ===", mission);
                         println!(
@@ -334,6 +372,12 @@ impl BackendClient {
                         println!();
                     }
                     Ok(ChatStreamEvent::Response { data }) => {
+                        if !has_tool_activity {
+                            // Clear thinking status line if no tool calls happened
+                            print!("\r\x1b[2K");
+                        } else {
+                            println!();
+                        }
                         final_response = Some(*data);
                     }
                     Ok(ChatStreamEvent::Error { message }) => {
@@ -571,7 +615,6 @@ fn build_chat_request(
     DebugAgentChatRequest {
         message,
         provider: args.provider.clone(),
-        investigation_id: args.investigation_id.clone(),
         chat_session_id,
         history,
         include_backend_context: Some(!args.no_backend_context),
@@ -581,19 +624,14 @@ fn build_chat_request(
 }
 
 fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
-    let assistant_label = agent_label(&response.agent_role);
     let assistant_content = render_assistant_content(&response.content);
 
-    println!("=== Assistant ===");
     println!(
-        "{} | provider={} | model={}",
-        assistant_label, response.provider, response.model
+        "\x1b[2m{} | {} | {}\x1b[0m",
+        agent_label(&response.agent_role),
+        response.provider,
+        response.model,
     );
-
-    if let Some(chat_session_id) = response.chat_session_id.as_deref() {
-        println!("session={}", chat_session_id);
-    }
-
     println!();
     println!("{}", assistant_content);
 
@@ -603,8 +641,7 @@ fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
         println!();
         println!("=== Debug ===");
         println!(
-            "investigation_id={} | chat_session_id={} | history_count={}",
-            response.investigation_id.as_deref().unwrap_or("không có"),
+            "chat_session_id={} | history_count={}",
             response.chat_session_id.as_deref().unwrap_or("không có"),
             response.debug.history_count,
         );

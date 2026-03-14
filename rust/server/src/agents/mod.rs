@@ -6,5 +6,5 @@ mod tool_runtime;
 pub use models::{
     AgentRole, ChatStreamEvent, DebugAgentChatRequest, DebugAgentView, ProviderStatusView,
 };
-pub use providers::{AgentChatOptions, AgentPromptContext, ProviderHub};
+pub use providers::{AgentChatOptions, ProviderHub};
 pub use skills::SkillRegistry;

@@ -4,13 +4,6 @@ import { motion, useInView } from "motion/react";
 import { useRef } from "react";
 import Link from "next/link";
 
-const stats = [
-  { label: "Instruments", value: "50+" },
-  { label: "Avg Latency", value: "0.08ms" },
-  { label: "AI Accuracy", value: "78%" },
-  { label: "Uptime", value: "99.99%" },
-];
-
 export function CTASection() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-80px" });
@@ -38,26 +31,11 @@ export function CTASection() {
             Automate your portfolio with institutional-grade algorithms.
           </p>
 
-          {/* Stats Row */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.3, delay: 0.2 }}
-            className="mt-10 grid grid-cols-4 gap-3"
-          >
-            {stats.map((stat) => (
-              <div key={stat.label} className="border border-border bg-card p-4">
-                <div className="text-[20px] font-bold text-cyan">{stat.value}</div>
-                <div className="mt-1 text-[9px] font-bold tracking-[1px] text-text-muted">{stat.label.toUpperCase()}</div>
-              </div>
-            ))}
-          </motion.div>
-
           {/* CTA Button */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.3, delay: 0.3 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
             className="relative mt-10 inline-block"
           >
             <div className="absolute inset-0 bg-cyan/20 blur-2xl" />

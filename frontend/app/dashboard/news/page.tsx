@@ -1,196 +1,436 @@
 "use client";
-import { motion } from "motion/react";
-import { StaggerGrid, SlideIn } from "@/components/dashboard/motion-primitives";
-import { StatsCard } from "@/components/dashboard/stats-card";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { PageTitle } from "@/components/dashboard/page-title";
+import { useNews } from "@/hooks/useNews";
+import { useCalendar } from "@/hooks/useCalendar";
+import type { CalendarEvent } from "@/lib/calendar-types";
+import { cn } from "@/lib/utils";
 
-const filterTabs = ["BREAKING", "ANALYSIS", "MARKET", "EARNINGS", "POLITICS"];
+const filterTabs = ["ALL", "IMPORTANT", "LATEST"];
 
-const articles = [
- {
- title: "Federal Reserve Minutes Signal Potential Rate Pause in Q2 2024",
- summary: "The latest FOMC minutes reveal growing consensus among policymakers for a pause in rate hikes, citing improving inflation data and labor market cooling.",
- source: "Reuters",
- time: "12m ago",
- category: "Breaking",
- impact: "High",
- },
- {
- title: "EUR/USD Technical Analysis: Key Resistance at 1.0900",
- summary: "The pair approaches a critical resistance zone with RSI showing bullish divergence on the 4H timeframe.",
- source: "FXStreet",
- time: "28m ago",
- category: "Analysis",
- impact: "Medium",
- },
- {
- title: "Bitcoin ETF Records $890M in Daily Inflows",
- summary: "Institutional adoption continues to accelerate as spot Bitcoin ETFs see another record-breaking day of net inflows.",
- source: "Bloomberg",
- time: "1h ago",
- category: "Market",
- impact: "High",
- },
- {
- title: "UK GDP Growth Beats Expectations at 0.3% Q/Q",
- summary: "British economy shows resilience with stronger-than-expected quarterly growth, supporting GBP strength.",
- source: "BBC",
- time: "2h ago",
- category: "Market",
- impact: "Medium",
- },
- {
- title: "Gold Prices Consolidate Near $2,040 Ahead of CPI Data",
- summary: "Precious metals trade in a narrow range as markets await tomorrow's US Consumer Price Index report.",
- source: "Kitco",
- time: "3h ago",
- category: "Market",
- impact: "Medium",
- },
- {
- title: "OPEC+ Considering Additional Production Cuts",
- summary: "Saudi Arabia leads discussions for deeper output reductions amid concerns over global demand outlook.",
- source: "Reuters",
- time: "4h ago",
- category: "Market",
- impact: "High",
- },
-];
+function formatNewsTime(ms: number): string {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "vừa xong";
+  if (mins < 60) return `${mins} phút trước`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
+}
 
-const calendarEvents = [
- { time: "08:30", event: "US CPI m/m", impact: "High", forecast: "0.2%", previous: "0.3%" },
- { time: "10:00", event: "US Consumer Sentiment", impact: "Medium", forecast: "69.4", previous: "69.7" },
- { time: "13:00", event: "US 30-y Bond Auction", impact: "Medium", forecast: "—", previous: "4.34%" },
- { time: "14:30", event: "ECB Press Conference", impact: "High", forecast: "—", previous: "—" },
-];
+function formatExactTime(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleTimeString("vi-VN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
-const trendingTopics = [
- "Fed Rate Decision", "Bitcoin ETF", "EUR/USD", "Oil Prices",
- "UK GDP", "Gold", "Japan CPI", "OPEC+",
- "Tech Earnings", "China PMI", "US Jobs", "ECB Policy",
-];
+function formatCalendarTime(unix: number): string {
+  const d = new Date(unix * 1000);
+  return d.toLocaleTimeString("vi-VN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+}
+
+// Get relative date label
+function getRelativeDateLabel(dateKey: string): { label: string; isToday: boolean; isPast: boolean } {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const target = new Date(y, m - 1, d);
+  target.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+
+  if (diffDays === 0) return { label: "Hôm nay", isToday: true, isPast: false };
+  if (diffDays === -1) return { label: "Hôm qua", isToday: false, isPast: true };
+  if (diffDays === -2) return { label: "2 ngày trước", isToday: false, isPast: true };
+  if (diffDays === 1) return { label: "Ngày mai", isToday: false, isPast: false };
+  if (diffDays === 2) return { label: "2 ngày nữa", isToday: false, isPast: false };
+  if (diffDays > 0) return { label: `${diffDays} ngày nữa`, isToday: false, isPast: false };
+  return { label: `${Math.abs(diffDays)} ngày trước`, isToday: false, isPast: true };
+}
+
+function formatShortDate(dateKey: string): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const target = new Date(y, m - 1, d);
+  const weekday = target.toLocaleDateString("vi-VN", { weekday: "short" });
+  return `${weekday}, ${d}/${m}`;
+}
+
+// Group calendar events by date key (YYYY-MM-DD)
+function groupByDateKey(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+  const groups = new Map<string, CalendarEvent[]>();
+  for (const ev of events) {
+    const d = new Date(ev.releasedDate * 1000);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(ev);
+  }
+  return groups;
+}
+
+// Sort events by star (highest first), then by time
+function sortByImportance(events: CalendarEvent[]): CalendarEvent[] {
+  return [...events].sort((a, b) => {
+    if (b.star !== a.star) return b.star - a.star;
+    return a.releasedDate - b.releasedDate;
+  });
+}
+
+const starLabel = (star: number) => {
+  if (star >= 3) return { text: "HIGH", color: "text-loss", bg: "bg-loss/10" };
+  if (star === 2) return { text: "MED", color: "text-warning", bg: "bg-warning/10" };
+  return { text: "LOW", color: "text-cyan", bg: "bg-cyan/10" };
+};
 
 export default function NewsPage() {
- return (
- <div className="flex gap-6 h-full overflow-y-auto p-6">
- <div className="flex-1 min-w-0 space-y-6">
- <PageTitle title="Market News" subtitle="Real-time news and market analysis" breadcrumb="NEWS / MARKET FEED" />
+  const [activeFilter, setActiveFilter] = useState("ALL");
+  const { items: liveNews, loading, loadingMore, error, hasMore, connected, refresh, loadMore } = useNews({
+    pageSize: 50,
+    pollInterval: 60_000,
+  });
+  const { events: calendarEvents, loading: calLoading } = useCalendar({ pastDays: 2, futureDays: 5 });
 
- {/* Filter Tabs */}
- <div className="flex gap-1">
- {filterTabs.map((tab) => (
- <button
- key={tab}
- className={` px-4 py-1.5 text-[12px] font-semibold tracking-wider transition-colors ${
- tab === "BREAKING"
- ? "bg-cyan/10 text-cyan"
- : "text-muted-foreground hover:bg-secondary"
- }`}
- >
- {tab}
- </button>
- ))}
- </div>
+  // Infinite scroll
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
- {/* Stats Row */}
- <StaggerGrid className="grid grid-cols-3 gap-4">
- <StatsCard title="Breaking News" value="3" change="High impact" changeType="neutral" />
- <StatsCard title="Articles Today" value="47" change="+12 vs yesterday" changeType="neutral" />
- <StatsCard title="Market Sentiment" value="Bullish" change="62% positive" changeType="profit" />
- </StaggerGrid>
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect();
 
- {/* Articles */}
- <motion.div className="space-y-3" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.2 }}>
- {articles.map((article, i) => (
- <div key={i} className=" border border-border bg-card p-4 transition-colors hover:border-cyan/30 cursor-pointer">
- <div className="flex items-start justify-between gap-4">
- <div className="flex-1">
- <div className="flex items-center gap-2 mb-1">
- <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
- article.impact === "High"
- ? "bg-loss/10 text-loss"
- : "bg-cyan/10 text-cyan"
- }`}>
- {article.impact} Impact
- </span>
- <span className="text-[10px] text-muted-foreground">{article.category}</span>
- </div>
- <h3 className="text-[14px] font-semibold leading-snug">{article.title}</h3>
- <p className="mt-1 text-[12px] text-muted-foreground leading-relaxed">{article.summary}</p>
- <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
- <span className="font-medium">{article.source}</span>
- <span>·</span>
- <span>{article.time}</span>
- </div>
- </div>
- </div>
- </div>
- ))}
- </motion.div>
- </div>
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
 
- {/* Right Sidebar */}
- <SlideIn direction="right" delay={0.3}>
- <div className="w-[300px] shrink-0 space-y-4">
- {/* Economic Calendar */}
- <div className=" border border-border bg-card">
- <div className="border-b border-border px-4 py-3">
- <h3 className="text-sm font-semibold">Economic Calendar</h3>
- </div>
- <div className="divide-y divide-border/50">
- {calendarEvents.map((event, i) => (
- <div key={i} className="px-4 py-2.5">
- <div className="flex items-center justify-between">
- <span className="text-[11px] text-muted-foreground">{event.time}</span>
- <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
- event.impact === "High"
- ? "bg-loss/10 text-loss"
- : "bg-cyan/10 text-cyan"
- }`}>
- {event.impact}
- </span>
- </div>
- <div className="text-[12px] font-medium mt-0.5">{event.event}</div>
- <div className="flex gap-3 mt-1 text-[10px] text-muted-foreground">
- <span>F: {event.forecast}</span>
- <span>P: {event.previous}</span>
- </div>
- </div>
- ))}
- </div>
- </div>
+    if (sentinelRef.current) {
+      observerRef.current.observe(sentinelRef.current);
+    }
 
- {/* Trending Topics */}
- <div className=" border border-border bg-card p-4">
- <h3 className="text-sm font-semibold mb-3">Trending Topics</h3>
- <div className="flex flex-wrap gap-2">
- {trendingTopics.map((topic, i) => (
- <span
- key={i}
- className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-cyan/50 hover:text-cyan cursor-pointer"
- >
- {topic}
- </span>
- ))}
- </div>
- </div>
+    return () => {
+      if (observerRef.current) observerRef.current.disconnect();
+    };
+  }, [hasMore, loadingMore, loadMore]);
 
- {/* Bookmarked */}
- <div className=" border border-border bg-card p-4">
- <h3 className="text-sm font-semibold mb-3">Bookmarked</h3>
- <div className="space-y-2">
- {["Fed Rate Decision Analysis", "BTC Weekly Outlook", "EUR/USD Trading Plan"].map((item, i) => (
- <div key={i} className="flex items-center gap-2 text-[12px]">
- <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-cyan shrink-0">
- <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" />
- </svg>
- <span className="text-muted-foreground hover:text-foreground cursor-pointer">{item}</span>
- </div>
- ))}
- </div>
- </div>
- </div>
- </SlideIn>
- </div>
- );
+  const filteredNews = activeFilter === "IMPORTANT"
+    ? liveNews.filter((n) => n.important)
+    : liveNews;
+
+  const importantCount = liveNews.filter((n) => n.important).length;
+
+  // Calendar grouped by date with sorted keys
+  const calendarGrouped = useMemo(() => groupByDateKey(calendarEvents), [calendarEvents]);
+  const dateKeys = useMemo(() => {
+    return Array.from(calendarGrouped.keys()).sort();
+  }, [calendarGrouped]);
+
+  // Active calendar date tab — default to today
+  const todayKey = useMemo(() => {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  }, []);
+  const [activeCalDate, setActiveCalDate] = useState<string | null>(null);
+
+  // Set initial active date to today (or first available)
+  useEffect(() => {
+    if (dateKeys.length > 0 && !activeCalDate) {
+      setActiveCalDate(dateKeys.includes(todayKey) ? todayKey : dateKeys[0]);
+    }
+  }, [dateKeys, todayKey, activeCalDate]);
+
+  const activeEvents = useMemo(() => {
+    if (!activeCalDate || !calendarGrouped.has(activeCalDate)) return [];
+    return sortByImportance(calendarGrouped.get(activeCalDate)!);
+  }, [activeCalDate, calendarGrouped]);
+
+  // Group active events by importance
+  const highEvents = activeEvents.filter((e) => e.star >= 3);
+  const medEvents = activeEvents.filter((e) => e.star === 2);
+  const lowEvents = activeEvents.filter((e) => e.star <= 1);
+
+  return (
+    <div className="flex gap-6 h-full overflow-y-auto p-6">
+      <div className="flex-1 min-w-0 space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <PageTitle title="Market News" subtitle="Tin tức thị trường" breadcrumb="NEWS / LIVE FEED" />
+        </motion.div>
+
+        {/* Filter Tabs + Status */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, delay: 0.05 }}
+          className="flex gap-1 items-center"
+        >
+          {filterTabs.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveFilter(tab)}
+              className={cn(
+                "px-4 py-1.5 text-[12px] font-semibold tracking-wider transition-colors",
+                activeFilter === tab
+                  ? "bg-cyan/10 text-cyan"
+                  : "text-muted-foreground hover:bg-secondary"
+              )}
+            >
+              {tab}
+              {tab === "IMPORTANT" && importantCount > 0 && (
+                <span className="ml-1.5 text-[10px] text-loss font-bold">{importantCount}</span>
+              )}
+            </button>
+          ))}
+          <div className="flex-1" />
+
+          {/* WebSocket status */}
+          <span className="flex items-center gap-1.5 mr-3">
+            <span className={cn(
+              "h-2 w-2 rounded-full",
+              connected ? "bg-profit live-dot" : "bg-muted-foreground"
+            )} />
+            <span className={cn(
+              "text-[10px] font-bold tracking-wide",
+              connected ? "text-profit" : "text-muted-foreground"
+            )}>
+              {connected ? "LIVE" : "POLLING"}
+            </span>
+          </span>
+
+        </motion.div>
+
+        {/* Loading */}
+        {loading && liveNews.length === 0 && (
+          <div className="py-12 text-center">
+            <div className="text-[14px] text-muted-foreground animate-pulse">Đang tải tin tức...</div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && liveNews.length === 0 && (
+          <div className="py-12 text-center">
+            <div className="text-[14px] text-loss">{error}</div>
+            <button onClick={() => location.reload()} className="mt-2 text-[13px] text-cyan hover:underline">Thử lại</button>
+          </div>
+        )}
+
+        {/* Articles */}
+        <div className="space-y-3">
+          {filteredNews.map((article, idx) => (
+            <motion.a
+              key={article.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.15, delay: Math.min(idx * 0.02, 0.3) }}
+              href={`https://www.fastbull.com${article.path}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "block border bg-card p-5 transition-colors cursor-pointer",
+                article.important
+                  ? "border-loss/40 hover:border-loss/60"
+                  : "border-border hover:border-cyan/30"
+              )}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    {article.important && (
+                      <span className="px-2.5 py-0.5 text-[11px] font-bold bg-loss/15 text-loss">
+                        QUAN TRỌNG
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground">
+                      <span className="font-mono">{formatExactTime(article.releasedDateMs)}</span>
+                      {" · "}
+                      {formatNewsTime(article.releasedDateMs)}
+                    </span>
+                  </div>
+                  <h3 className={cn(
+                    "text-[16px] font-semibold leading-[1.6]",
+                    article.important ? "text-loss" : ""
+                  )}>
+                    {article.title}
+                  </h3>
+                </div>
+              </div>
+            </motion.a>
+          ))}
+
+          {/* Infinite scroll sentinel */}
+          <div ref={sentinelRef} className="py-4 text-center">
+            {loadingMore && (
+              <div className="text-[13px] text-muted-foreground animate-pulse">Đang tải thêm...</div>
+            )}
+            {!hasMore && filteredNews.length > 0 && (
+              <div className="text-[12px] text-muted-foreground">Đã tải hết tin tức</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Right Sidebar — Economic Calendar */}
+      <motion.div
+        initial={{ opacity: 0, x: 12 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.25, delay: 0.1 }}
+        className="w-[340px] shrink-0 space-y-4"
+      >
+        <div className="border border-border bg-card">
+          {/* Calendar Header */}
+          <div className="border-b border-border px-4 py-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Lịch kinh tế</h3>
+            </div>
+          </div>
+
+          {/* Date Tab Navigation */}
+          {!calLoading && dateKeys.length > 0 && (
+            <div className="flex overflow-x-auto border-b border-border">
+              {dateKeys.map((dk) => {
+                const rel = getRelativeDateLabel(dk);
+                const short = formatShortDate(dk);
+                const evCount = calendarGrouped.get(dk)?.length ?? 0;
+                const isActive = activeCalDate === dk;
+                return (
+                  <button
+                    key={dk}
+                    onClick={() => setActiveCalDate(dk)}
+                    className={cn(
+                      "flex-shrink-0 px-3 py-2.5 text-center border-b-2 transition-colors min-w-[80px]",
+                      isActive
+                        ? "border-cyan bg-cyan/5"
+                        : "border-transparent hover:bg-secondary/50",
+                      rel.isPast && !isActive && "opacity-60"
+                    )}
+                  >
+                    <div className={cn(
+                      "text-[10px] font-bold tracking-wide",
+                      isActive ? "text-cyan" : rel.isToday ? "text-foreground" : "text-muted-foreground"
+                    )}>
+                      {rel.label}
+                    </div>
+                    <div className="text-[9px] text-muted-foreground mt-0.5">{short}</div>
+                    <div className={cn(
+                      "text-[9px] font-semibold mt-0.5",
+                      isActive ? "text-cyan" : "text-text-faint"
+                    )}>
+                      {evCount} sự kiện
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Calendar Content */}
+          {calLoading ? (
+            <div className="px-4 py-8 text-center">
+              <div className="text-[12px] text-muted-foreground animate-pulse">Đang tải lịch kinh tế...</div>
+            </div>
+          ) : calendarEvents.length === 0 ? (
+            <div className="px-4 py-8 text-center">
+              <div className="text-[12px] text-muted-foreground">Không có sự kiện</div>
+            </div>
+          ) : (
+            <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeCalDate}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  {/* HIGH importance */}
+                  {highEvents.length > 0 && (
+                    <CalendarSection label="HIGH IMPACT" events={highEvents} starLevel={3} />
+                  )}
+
+                  {/* MEDIUM importance */}
+                  {medEvents.length > 0 && (
+                    <CalendarSection label="MEDIUM IMPACT" events={medEvents} starLevel={2} />
+                  )}
+
+                  {/* LOW importance */}
+                  {lowEvents.length > 0 && (
+                    <CalendarSection label="LOW IMPACT" events={lowEvents} starLevel={1} />
+                  )}
+
+                  {activeEvents.length === 0 && (
+                    <div className="px-4 py-8 text-center">
+                      <div className="text-[12px] text-muted-foreground">Không có sự kiện cho ngày này</div>
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function CalendarSection({ label, events, starLevel }: { label: string; events: CalendarEvent[]; starLevel: number }) {
+  const sl = starLabel(starLevel);
+  return (
+    <div>
+      {/* Section header */}
+      <div className="sticky top-0 bg-secondary/80 backdrop-blur-sm px-4 py-2 border-b border-border/50 flex items-center gap-2">
+        <span className={cn("px-1.5 py-0.5 text-[8px] font-bold tracking-wider", sl.bg, sl.color)}>
+          {"★".repeat(starLevel)}
+        </span>
+        <span className={cn("text-[10px] font-bold tracking-wider", sl.color)}>{label}</span>
+        <span className="text-[9px] text-muted-foreground ml-auto">{events.length}</span>
+      </div>
+      <div className="divide-y divide-border/30">
+        {events.map((event, idx) => (
+          <motion.div
+            key={event.id}
+            initial={{ opacity: 0, x: -4 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.12, delay: idx * 0.02 }}
+            className="px-4 py-3 hover:bg-secondary/30 transition-colors"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground font-mono">
+                  {formatCalendarTime(event.releasedDate)}
+                </span>
+                <span className="text-[9px] font-semibold text-text-dim px-1.5 py-0.5 bg-secondary">
+                  {event.country}
+                </span>
+              </div>
+            </div>
+            <div className="text-[12px] font-medium mt-1 leading-[1.5]">{event.title}</div>
+            {event.type === "data" && (event.actual || event.consensus || event.previous) && (
+              <div className="flex gap-3 mt-1.5 text-[10px]">
+                {event.actual && (
+                  <span className="text-profit font-semibold">
+                    Thực tế: {event.actual}{event.unit || ""}
+                  </span>
+                )}
+                {event.consensus && (
+                  <span className="text-muted-foreground">
+                    Dự báo: {event.consensus}{event.unit || ""}
+                  </span>
+                )}
+                {event.previous && (
+                  <span className="text-muted-foreground">
+                    Trước: {event.previous}{event.unit || ""}
+                  </span>
+                )}
+              </div>
+            )}
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
 }

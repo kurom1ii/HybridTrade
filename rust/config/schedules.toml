@@ -1,14 +1,17 @@
 [[schedules]]
-name = "heartbeat-sweep"
-cron_expr = "0 * * * * *"
-job_type = "heartbeat_sweep"
-enabled = true
+name = "xau-usd-analysis"
+cron_expr = "*/5 * * * *"
+job_type = "agent_task"
+enabled = false
+agent_role = "kuromi"
+message = "Phân tích kỹ thuật XAU/USD: xu hướng, hỗ trợ/kháng cự, tín hiệu giao dịch."
 payload = {}
 
 [[schedules]]
-name = "memory-compaction"
-cron_expr = "0 */10 * * * *"
-job_type = "memory_compaction"
-enabled = true
+name = "news-digest"
+cron_expr = "0 */6 * * *"
+job_type = "agent_task"
+enabled = false
+agent_role = "kuromi"
+message = "Tổng hợp tin tức tài chính quan trọng trong 6 giờ qua, phân tích tác động lên thị trường."
 payload = {}
-

@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "DASHBOARD", icon: "grid" },
-  { href: "/dashboard/markets", label: "MARKETS", icon: "chart" },
-  { href: "/dashboard/positions", label: "POSITIONS", icon: "layers" },
+  { href: "/dashboard/news", label: "NEWS", icon: "rss" },
+  { href: "/dashboard/agents", label: "AGENTS", icon: "cpu" },
   { href: "/dashboard/analytics", label: "ANALYSIS", icon: "bar-chart" },
 ];
 
@@ -27,6 +27,26 @@ const iconMap: Record<string, React.ReactNode> = {
   layers: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+    </svg>
+  ),
+  clipboard: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" />
+    </svg>
+  ),
+  zap: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  ),
+  rss: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 11a9 9 0 019 9" /><path d="M4 4a16 16 0 0116 16" /><circle cx="5" cy="19" r="1" />
+    </svg>
+  ),
+  cpu: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
     </svg>
   ),
   "bar-chart": (
@@ -47,7 +67,7 @@ export function Sidebar() {
     <aside className="flex h-screen w-[240px] flex-col bg-panel border-r border-border">
       {/* Logo */}
       <div className="flex h-14 items-center gap-3 px-5">
-        <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan to-[#00b4d8] shadow-[0_0_12px_rgba(0,180,216,0.2)]">
+        <div className="relative flex h-9 w-9 items-center justify-center bg-gradient-to-br from-cyan to-[#00b4d8] shadow-[0_0_12px_rgba(0,180,216,0.2)]">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
             <path d="M5 15L8 5" stroke="black" strokeWidth="2.5" strokeLinecap="round" />
             <path d="M12 15L15 5" stroke="black" strokeWidth="2.5" strokeLinecap="round" />
@@ -107,7 +127,7 @@ export function Sidebar() {
       <div className="p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-dim text-[11px] font-bold text-cyan">
+            <div className="flex h-8 w-8 items-center justify-center bg-cyan-dim text-[11px] font-bold text-cyan">
               K
             </div>
             <div>

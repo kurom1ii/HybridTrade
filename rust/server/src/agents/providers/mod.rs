@@ -5,4 +5,4 @@ mod prompt;
 mod protocols;
 pub(crate) mod team;
 
-pub use hub::{AgentChatOptions, AgentPromptContext, ProviderHub};
+pub use hub::{AgentChatOptions, ProviderHub};

@@ -70,21 +70,10 @@ interface SearchItem {
 
 const searchItems: SearchItem[] = [
   { symbol: "XAU/USD", name: "Gold", category: "COMMODITIES", direction: "BUY", price: "2,178.40", change: "+0.89%", type: "profit", summary: "Xu huong tang manh, RSI(14) vung 62" },
-  { symbol: "XAG/USD", name: "Silver", category: "COMMODITIES", direction: "BUY", price: "24.82", change: "+1.24%", type: "profit", summary: "Breakout channel 23.80-24.50" },
-  { symbol: "WTI/USD", name: "Crude Oil", category: "COMMODITIES", direction: "SELL", price: "78.45", change: "-0.67%", type: "loss", summary: "Lo ngai demand yeu tu Trung Quoc" },
-  { symbol: "BRENT", name: "Brent Oil", category: "COMMODITIES", direction: "SELL", price: "82.10", change: "-0.42%", type: "loss", summary: "Test duong trend giam tu thang 9" },
-  { symbol: "NGAS", name: "Natural Gas", category: "COMMODITIES", direction: "BUY", price: "2.847", change: "+2.18%", type: "profit", summary: "Du bao thoi tiet lanh bat thuong" },
-  { symbol: "US30", name: "Dow Jones", category: "INDICES", direction: "SELL", price: "39,142", change: "+0.34%", type: "profit", summary: "RSI divergence am, buyer kiet suc" },
-  { symbol: "NAS100", name: "Nasdaq", category: "INDICES", direction: "NEUTRAL", price: "17,892", change: "+0.52%", type: "profit", summary: "Sideway range 17,600-18,000" },
-  { symbol: "EUR/USD", name: "Euro", category: "FOREX", direction: "BUY", price: "1.0847", change: "+0.24%", type: "profit", summary: "Rebound tu support 1.0780" },
-  { symbol: "GBP/USD", name: "Pound", category: "FOREX", direction: "BUY", price: "1.2634", change: "+0.18%", type: "profit", summary: "Test resistance 1.2650" },
-  { symbol: "USD/JPY", name: "Yen", category: "FOREX", direction: "SELL", price: "149.82", change: "-0.31%", type: "loss", summary: "Gan nguong can thiep BOJ 150" },
-  { symbol: "BTC/USD", name: "Bitcoin", category: "CRYPTO", direction: "BUY", price: "67,842", change: "+2.14%", type: "profit", summary: "ETF inflows ky luc, halving Q2" },
-  { symbol: "ETH/USD", name: "Ethereum", category: "CRYPTO", direction: "NEUTRAL", price: "3,456", change: "-1.07%", type: "loss", summary: "Underperform BTC, cho tin ETF" },
 ];
 
 export function TopBar() {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -93,6 +82,7 @@ export function TopBar() {
   const router = useRouter();
 
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(id);
   }, []);
@@ -163,7 +153,9 @@ export function TopBar() {
     }
   }, [filtered, selectedIdx, handleSelect]);
 
-  const utcStr = `${now.getUTCHours().toString().padStart(2, "0")}:${now.getUTCMinutes().toString().padStart(2, "0")}:${now.getUTCSeconds().toString().padStart(2, "0")} UTC`;
+  const utcStr = now
+    ? `${now.getUTCHours().toString().padStart(2, "0")}:${now.getUTCMinutes().toString().padStart(2, "0")}:${now.getUTCSeconds().toString().padStart(2, "0")} UTC`
+    : "--:--:-- UTC";
 
   return (
     <>
@@ -186,7 +178,7 @@ export function TopBar() {
         {/* Trading Sessions */}
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           {sessions.map((session) => {
-            const status = getSessionStatus(session, now);
+            const status = now ? getSessionStatus(session, now) : { open: false, label: "--:--:--" };
             return (
               <div
                 key={session.name}

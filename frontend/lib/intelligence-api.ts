@@ -1,10 +1,7 @@
 import {
-  CreateInvestigationPayload,
+  CreateSchedulePayload,
   DashboardResponse,
-  InvestigationDetail,
-  InvestigationSummary,
   ScheduleView,
-  HeartbeatView,
   AgentStatusView,
 } from "@/lib/intelligence-types";
 
@@ -43,37 +40,21 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function investigationStreamUrl(investigationId: string): string {
-  return `${API_BASE_URL}/api/investigations/${investigationId}/stream`;
-}
-
 export function fetchDashboard(): Promise<DashboardResponse> {
   return apiFetch<DashboardResponse>("/api/dashboard");
-}
-
-export function fetchInvestigations(): Promise<InvestigationSummary[]> {
-  return apiFetch<InvestigationSummary[]>("/api/investigations");
-}
-
-export function fetchInvestigation(investigationId: string): Promise<InvestigationDetail> {
-  return apiFetch<InvestigationDetail>(`/api/investigations/${investigationId}`);
-}
-
-export function createInvestigation(payload: CreateInvestigationPayload): Promise<InvestigationDetail> {
-  return apiFetch<InvestigationDetail>("/api/investigations", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
 }
 
 export function fetchAgentStatuses(): Promise<AgentStatusView[]> {
   return apiFetch<AgentStatusView[]>("/api/agents/status");
 }
 
-export function fetchHeartbeats(): Promise<HeartbeatView[]> {
-  return apiFetch<HeartbeatView[]>("/api/heartbeats");
-}
-
 export function fetchSchedules(): Promise<ScheduleView[]> {
   return apiFetch<ScheduleView[]>("/api/schedules");
+}
+
+export function createSchedule(payload: CreateSchedulePayload): Promise<ScheduleView> {
+  return apiFetch<ScheduleView>("/api/schedules", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

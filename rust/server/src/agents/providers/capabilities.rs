@@ -114,20 +114,6 @@ impl CapabilityCatalog {
         .await
     }
 
-    pub(super) async fn tool_runtime_native_only(
-        &self,
-        history: &[ChatTurn],
-        context_preview: Option<String>,
-    ) -> ToolRuntime {
-        ToolRuntime::bootstrap(
-            vec![],
-            self.native_tools.clone(),
-            history.to_vec(),
-            context_preview,
-        )
-        .await
-    }
-
     /// Tạo runtime đầy đủ (native + MCP) nhưng mỗi MCP server browser sẽ chạy
     /// với `--isolated` flag để tránh xung đột profile giữa các subagent.
     pub(super) async fn tool_runtime_for_isolated(

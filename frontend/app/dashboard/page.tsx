@@ -14,6 +14,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, LabelList } from "recharts";
+import { useNews } from "@/hooks/useNews";
 
 type Category = "ALL" | "COMMODITIES" | "FOREX" | "INDICES" | "CRYPTO";
 
@@ -44,105 +45,12 @@ const instruments: Instrument[] = [
     summary: "Gold dang trong xu huong tang manh, pha ky 2,170 resistance. RSI(14) o vung 62, chua qua mua. DXY suy yeu ho tro Gold tiep tuc rally. Target 2,210 neu giu duoc 2,155.",
     entry: "2,175.00", tp: "2,210.00", sl: "2,155.00",
   },
-  {
-    symbol: "XAG/USD", name: "Silver", price: "24.82", change: "+1.24%", type: "profit",
-    category: "COMMODITIES", confidence: 74, direction: "BUY",
-    session: "London / New York", timeframe: "H4",
-    keyLevels: ["24.20", "24.50", "25.00", "25.40"],
-    summary: "Silver breakout khoi channel 23.80-24.50, momentum tang. Gold/Silver ratio dang giam, bao hieu silver outperform. Ho tro tai 24.20, resistance tiep theo 25.40.",
-    entry: "24.70", tp: "25.40", sl: "24.20",
-  },
-  {
-    symbol: "WTI/USD", name: "Crude Oil", price: "78.45", change: "-0.67%", type: "loss",
-    category: "COMMODITIES", confidence: 68, direction: "SELL",
-    session: "New York", timeframe: "H1",
-    keyLevels: ["76.80", "78.00", "79.60", "80.50"],
-    summary: "Oil giam do lo ngai demand yeu tu Trung Quoc. OPEC+ van giu cat giam san luong nhung market khong phan ung. Support quan trong tai 76.80, pha vo se den 74.50.",
-    entry: "78.80", tp: "76.80", sl: "79.60",
-  },
-  {
-    symbol: "BRENT", name: "Brent Oil", price: "82.10", change: "-0.42%", type: "loss",
-    category: "COMMODITIES", confidence: 64, direction: "SELL",
-    session: "London", timeframe: "H4",
-    keyLevels: ["80.50", "82.00", "83.20", "84.80"],
-    summary: "Brent test duong trend giam tu thang 9. Spread voi WTI thu hep, cho thay demand chau Au yeu. Nen thoi candle 4H cho thay selling pressure tang.",
-    entry: "82.40", tp: "80.50", sl: "83.20",
-  },
-  {
-    symbol: "NGAS", name: "Natural Gas", price: "2.847", change: "+2.18%", type: "profit",
-    category: "COMMODITIES", confidence: 71, direction: "BUY",
-    session: "New York", timeframe: "D1",
-    keyLevels: ["2.70", "2.85", "3.00", "3.15"],
-    summary: "Natural Gas tang manh do du bao thoi tiet lanh bat thuong. Inventory thap hon trung binh 5 nam. Resistance tai 3.00 la muc tam ly quan trong.",
-    entry: "2.82", tp: "3.05", sl: "2.70",
-  },
-  {
-    symbol: "US30", name: "Dow Jones", price: "39,142", change: "+0.34%", type: "profit",
-    category: "INDICES", confidence: 72, direction: "SELL",
-    session: "New York", timeframe: "H4",
-    keyLevels: ["38,700", "39,000", "39,200", "39,500"],
-    summary: "US30 dat all-time high nhung RSI divergence am. Ky vong Fed giu lai suat cao hon lau hon. Nen thoi candle ngay cho thay buyer kiet suc. Short neu mat 39,000.",
-    entry: "39,200", tp: "38,700", sl: "39,500",
-  },
-  {
-    symbol: "NAS100", name: "Nasdaq", price: "17,892", change: "+0.52%", type: "profit",
-    category: "INDICES", confidence: 66, direction: "NEUTRAL",
-    session: "New York", timeframe: "H4",
-    keyLevels: ["17,600", "17,800", "18,000", "18,200"],
-    summary: "Nasdaq sideway trong range 17,600-18,000. Tech earnings season dang den, volatility se tang. Cho breakout ro truoc khi vao lenh. Canh gioi NVDA va AAPL report.",
-    entry: "--", tp: "--", sl: "--",
-  },
-  {
-    symbol: "EUR/USD", name: "Euro", price: "1.0847", change: "+0.24%", type: "profit",
-    category: "FOREX", confidence: 81, direction: "BUY",
-    session: "London / New York", timeframe: "H1",
-    keyLevels: ["1.0780", "1.0830", "1.0860", "1.0900"],
-    summary: "EUR/USD rebound tu support 1.0780. ECB giu lai suat on dinh trong khi Fed co tin hieu dovish. Target 1.0900 neu breakout 1.0860. RSI dang phuc hoi tu vung oversold.",
-    entry: "1.0830", tp: "1.0900", sl: "1.0780",
-  },
-  {
-    symbol: "GBP/USD", name: "Pound", price: "1.2634", change: "+0.18%", type: "profit",
-    category: "FOREX", confidence: 69, direction: "BUY",
-    session: "London", timeframe: "H4",
-    keyLevels: ["1.2560", "1.2620", "1.2650", "1.2750"],
-    summary: "Cable test resistance 1.2650. BoE hawkish hon ky vong, inflation van cao. Neu pha duoc 1.2650 se den 1.2750. Risk: DXY rebound se day GBP xuong.",
-    entry: "1.2620", tp: "1.2750", sl: "1.2560",
-  },
-  {
-    symbol: "USD/JPY", name: "Yen", price: "149.82", change: "-0.31%", type: "loss",
-    category: "FOREX", confidence: 76, direction: "SELL",
-    session: "Tokyo / London", timeframe: "H1",
-    keyLevels: ["148.50", "149.00", "150.00", "150.50"],
-    summary: "USD/JPY gan muc 150 — nguong can thiep cua BOJ. Yield gap My-Nhat thu hep. Risk/reward tot cho short tai 150. BOJ co the thay doi chinh sach bat ngo.",
-    entry: "149.90", tp: "148.50", sl: "150.50",
-  },
-  {
-    symbol: "BTC/USD", name: "Bitcoin", price: "67,842", change: "+2.14%", type: "profit",
-    category: "CRYPTO", confidence: 78, direction: "BUY",
-    session: "24/7", timeframe: "D1",
-    keyLevels: ["65,000", "67,000", "70,000", "72,000"],
-    summary: "BTC tang manh do ETF inflows ky luc. Halving sap den trong Q2. Support manh tai 65,000. Target 72,000 neu volume duy tri. On-chain data cho thay accumulation tu whale.",
-    entry: "67,500", tp: "72,000", sl: "65,000",
-  },
-  {
-    symbol: "ETH/USD", name: "Ethereum", price: "3,456", change: "-1.07%", type: "loss",
-    category: "CRYPTO", confidence: 62, direction: "NEUTRAL",
-    session: "24/7", timeframe: "D1",
-    keyLevels: ["3,300", "3,400", "3,500", "3,600"],
-    summary: "ETH underperform BTC, ETH/BTC ratio giam. ETF Ethereum chua duoc duyet, sentiment trung tinh. Support 3,300, resistance 3,600. Cho tin ETF truoc khi vao lenh lon.",
-    entry: "--", tp: "--", sl: "--",
-  },
 ];
 
 // Money Flow chart
-const flowSymbols = ["XAU/USD", "WTI/USD", "EUR/USD", "US30", "BTC/USD", "XAG/USD"] as const;
+const flowSymbols = ["XAU/USD"] as const;
 const flowColors: Record<string, string> = {
   "XAU/USD": "#FFD700",
-  "WTI/USD": "#ff4444",
-  "EUR/USD": "#2196F3",
-  "US30": "#f39c12",
-  "BTC/USD": "#22c55e",
-  "XAG/USD": "#C0C0C0",
 };
 
 type Timeframe = "1M" | "5M" | "15M" | "1H" | "4H" | "1D";
@@ -200,7 +108,7 @@ function generateFlowDataForTF(tf: Timeframe) {
     const point: Record<string, string | number> = { time: formatTime(tf, i) };
     flowSymbols.forEach((sym, si) => {
       const base = 50 + si * 10;
-      const trendRate = sym === "BTC/USD" ? 0.4 : sym === "WTI/USD" ? -0.2 : sym === "XAU/USD" ? 0.3 : sym === "EUR/USD" ? 0.15 : sym === "US30" ? -0.1 : 0.25;
+      const trendRate = 0.3;
       const trend = i * trendRate * (count < 80 ? 1 : 0.5);
       const wave1 = Math.sin(i * 0.12 + si * 1.7) * 8 * volatilityScale;
       const wave2 = Math.cos(i * 0.07 + si * 2.3) * 5 * volatilityScale;
@@ -217,49 +125,9 @@ const flowChartConfig: ChartConfig = Object.fromEntries(
 
 // Watchlist data (from design)
 const watchlist = [
-  { symbol: "EUR/USD", price: "1.0842", change: "+0.32%", type: "profit" as const, tag: "FX" },
-  { symbol: "GBP/USD", price: "1.2651", change: "-0.15%", type: "loss" as const, tag: "FX" },
-  { symbol: "USD/JPY", price: "149.82", change: "+0.58%", type: "profit" as const, tag: "FX" },
-  { symbol: "BTC/USD", price: "67,432.50", change: "+2.41%", type: "profit" as const, tag: "CRYPTO" },
-  { symbol: "ETH/USD", price: "3,521.80", change: "+1.87%", type: "profit" as const, tag: "CRYPTO" },
-  { symbol: "XAU/USD", price: "2,178.40", change: "-0.22%", type: "loss" as const, tag: "METAL" },
+  { symbol: "XAU/USD", price: "2,178.40", change: "+0.89%", type: "profit" as const, tag: "METAL" },
 ];
 
-// News data (from design)
-const newsItems = [
-  {
-    time: "14:32 UTC",
-    title: "Fed signals potential rate pause amid inflation cooldown",
-    source: "REUTERS",
-    sentiment: "BULLISH" as const,
-    impact: "HIGH IMPACT",
-    category: "MACRO",
-  },
-  {
-    time: "13:15 UTC",
-    title: "Bitcoin ETF inflows surge past $2B weekly record",
-    source: "BLOOMBERG",
-    sentiment: "BULLISH" as const,
-    impact: "HIGH IMPACT",
-    category: "CRYPTO",
-  },
-  {
-    time: "11:48 UTC",
-    title: "ECB maintains hawkish stance on euro zone recovery",
-    source: "FT",
-    sentiment: "BEARISH" as const,
-    impact: "MED IMPACT",
-    category: "MACRO",
-  },
-  {
-    time: "09:22 UTC",
-    title: "Gold retreats as dollar strengthens on jobs data",
-    source: "CNBC",
-    sentiment: "BEARISH" as const,
-    impact: "LOW IMPACT",
-    category: "COMMODITY",
-  },
-];
 
 const filterTabs: { value: Category; label: string }[] = [
   { value: "ALL", label: "ALL" },
@@ -506,12 +374,47 @@ function MoneyFlowChart() {
   );
 }
 
+function formatNewsTime(ms: number): string {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "vừa xong";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function formatExactTime(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleTimeString("vi-VN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function RightPanel() {
+  const { items: liveNews, loading, error, lastUpdated, connected, loadMore, loadingMore, hasMore } = useNews({ pageSize: 15, pollInterval: 60_000 });
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect();
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (sentinelRef.current) {
+      observerRef.current.observe(sentinelRef.current);
+    }
+    return () => {
+      if (observerRef.current) observerRef.current.disconnect();
+    };
+  }, [hasMore, loadingMore, loadMore]);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 12 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.2, delay: 0.1 }}
+    <div
       className="w-[320px] shrink-0 border-l border-border bg-panel overflow-y-auto hidden xl:flex flex-col"
     >
       {/* Header */}
@@ -541,7 +444,6 @@ function RightPanel() {
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                {/* Mini sparkline bars */}
                 <div className="flex items-end gap-[2px] h-4">
                   {Array.from({ length: 7 }, (_, i) => {
                     const h = 4 + Math.abs(Math.sin(w.symbol.length * 2.3 + i * 0.8)) * 12;
@@ -579,62 +481,84 @@ function RightPanel() {
       {/* Divider */}
       <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent mx-3" />
 
-      {/* News Feed */}
+      {/* Live News Feed */}
       <div className="px-3 py-3 flex-1">
-        <div className="text-[10px] font-bold tracking-[1.5px] text-cyan mb-3 px-2">// LATEST NEWS</div>
+        <div className="flex items-center justify-between mb-3 px-2">
+          <div className="flex items-center gap-2">
+            <div className="text-[10px] font-bold tracking-[1.5px] text-cyan">// LATEST NEWS</div>
+            {connected && (
+              <span className="flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-profit live-dot" />
+                <span className="text-[8px] font-bold text-profit">LIVE</span>
+              </span>
+            )}
+          </div>
+          {lastUpdated && (
+            <span className="text-[8px] text-text-faint">
+              {lastUpdated.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+
+        {loading && liveNews.length === 0 && (
+          <div className="px-2 py-8 text-center">
+            <div className="text-[11px] text-text-muted animate-pulse">Loading news...</div>
+          </div>
+        )}
+
+        {error && liveNews.length === 0 && (
+          <div className="px-2 py-4 text-center">
+            <div className="text-[11px] text-loss">{error}</div>
+          </div>
+        )}
+
         <div className="space-y-2">
-          {newsItems.map((news, i) => (
-            <div key={i} className="flex bg-card-alt overflow-hidden">
-              {/* Left accent bar */}
-              <div className="w-[2px] shrink-0 bg-cyan" />
-              <div className="p-3 space-y-2 min-w-0">
+          {liveNews.map((news) => (
+            <a
+              key={news.id}
+              href={`https://www.fastbull.com${news.path}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex bg-card-alt overflow-hidden cursor-pointer group transition-colors hover:bg-card"
+            >
+              {/* Left accent bar — red for important, cyan for normal */}
+              <div className={cn(
+                "w-[2px] shrink-0",
+                news.important ? "bg-loss" : "bg-cyan"
+              )} />
+              <div className="p-3 space-y-1.5 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] text-text-faint">{news.time} · TODAY</span>
+                  <span className="text-[10px] text-text-faint">
+                    <span className="text-text-muted">{formatExactTime(news.releasedDateMs)}</span>
+                    {" · "}
+                    {formatNewsTime(news.releasedDateMs)}
+                  </span>
+                  {news.important && (
+                    <span className="text-[9px] font-bold tracking-[0.5px] px-1.5 py-0.5 bg-loss/15 text-loss">
+                      IMPORTANT
+                    </span>
+                  )}
                 </div>
-                <p className="text-[11px] font-semibold leading-[1.5] text-foreground/85">{news.title}</p>
-                <span className="text-[10px] font-bold tracking-[0.5px] text-cyan">{news.source}</span>
-                <div className="flex gap-2 flex-wrap">
-                  <span
-                    className={cn(
-                      "text-[8px] font-bold tracking-[0.5px] px-2 py-0.5",
-                      news.sentiment === "BULLISH"
-                        ? "bg-cyan/10 text-cyan"
-                        : "bg-loss/10 text-loss"
-                    )}
-                  >
-                    {news.sentiment}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-[8px] font-bold tracking-[0.5px] px-2 py-0.5",
-                      news.impact === "HIGH IMPACT"
-                        ? "bg-warning/10 text-warning"
-                        : news.impact === "MED IMPACT"
-                          ? "bg-warning/10 text-warning/70"
-                          : "bg-card text-text-muted"
-                    )}
-                  >
-                    {news.impact}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-[8px] font-bold tracking-[0.5px] px-2 py-0.5",
-                      news.category === "CRYPTO"
-                        ? "bg-[#9b59b6]/10 text-[#9b59b6]"
-                        : news.category === "COMMODITY"
-                          ? "bg-warning/10 text-warning"
-                          : "bg-card text-text-muted"
-                    )}
-                  >
-                    {news.category}
-                  </span>
-                </div>
+                <p className={cn(
+                  "text-[13px] font-semibold leading-[1.6] group-hover:text-foreground transition-colors",
+                  news.important
+                    ? "text-loss"
+                    : "text-foreground/85"
+                )}>
+                  {news.title}
+                </p>
               </div>
-            </div>
+            </a>
           ))}
+          {/* Infinite scroll sentinel */}
+          <div ref={sentinelRef} className="py-2 text-center">
+            {loadingMore && (
+              <div className="text-[10px] text-text-muted animate-pulse">Đang tải thêm...</div>
+            )}
+          </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -687,7 +611,7 @@ export default function DashboardPage() {
               visible: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" } },
             }}
             whileHover={{ y: -4, scale: 1.015, transition: { duration: 0.2, ease: "easeOut" } }}
-            className="group bg-card rounded-lg overflow-hidden cursor-pointer border"
+            className="group bg-card overflow-hidden cursor-pointer border"
             style={{
               borderColor: inst.direction === "BUY"
                 ? "var(--profit)"

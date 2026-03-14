@@ -8,7 +8,7 @@ use serde_json::Value;
 pub struct ConfigBundle {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
-    pub heartbeat: HeartbeatConfig,
+    pub scheduler: SchedulerConfig,
     pub orchestration: OrchestrationConfig,
     pub providers: ProvidersConfig,
     pub tooling: ToolingConfig,
@@ -28,7 +28,7 @@ impl ConfigBundle {
         Ok(Self {
             server: app.server,
             database: app.database,
-            heartbeat: app.heartbeat,
+            scheduler: app.scheduler,
             orchestration: app.orchestration,
             providers: app.providers,
             tooling: ToolingConfig {
@@ -44,7 +44,7 @@ impl ConfigBundle {
 struct AppFile {
     server: ServerConfig,
     database: DatabaseConfig,
-    heartbeat: HeartbeatConfig,
+    scheduler: SchedulerConfig,
     orchestration: OrchestrationConfig,
     #[serde(default)]
     providers: ProvidersConfig,
@@ -63,12 +63,13 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct HeartbeatConfig {
-    pub api_interval_seconds: u64,
-    pub api_ttl_seconds: i64,
-    pub scheduler_interval_seconds: u64,
-    pub scheduler_ttl_seconds: i64,
-    pub agent_ttl_seconds: i64,
+pub struct SchedulerConfig {
+    #[serde(default = "default_scheduler_interval")]
+    pub interval_seconds: u64,
+}
+
+fn default_scheduler_interval() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +141,10 @@ pub struct ProviderConfig {
     pub compact_summary_chars: usize,
     #[serde(default = "default_compact_keep_recent_turns")]
     pub compact_keep_recent_turns: usize,
+    #[serde(default = "default_thinking")]
+    pub thinking: bool,
+    #[serde(default = "default_thinking_budget_tokens")]
+    pub thinking_budget_tokens: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -205,6 +210,8 @@ impl Default for ProviderConfig {
             compact_target_chars: default_compact_target_chars(),
             compact_summary_chars: default_compact_summary_chars(),
             compact_keep_recent_turns: default_compact_keep_recent_turns(),
+            thinking: default_thinking(),
+            thinking_budget_tokens: default_thinking_budget_tokens(),
         }
     }
 }
@@ -221,8 +228,16 @@ pub struct ScheduleSeed {
     pub cron_expr: String,
     pub job_type: String,
     pub enabled: bool,
+    #[serde(default = "default_agent_role")]
+    pub agent_role: String,
+    #[serde(default)]
+    pub message: String,
     #[serde(default)]
     pub payload: Value,
+}
+
+fn default_agent_role() -> String {
+    "kuromi".to_string()
 }
 
 fn read_toml<T: for<'de> Deserialize<'de>>(path: impl AsRef<Path>) -> Result<T> {
@@ -279,4 +294,12 @@ fn default_compact_summary_chars() -> usize {
 
 fn default_compact_keep_recent_turns() -> usize {
     6
+}
+
+fn default_thinking() -> bool {
+    true
+}
+
+fn default_thinking_budget_tokens() -> u32 {
+    32_000
 }
