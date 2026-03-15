@@ -188,6 +188,16 @@ enum ChatStreamEvent {
     AgentThinking {
         model: String,
     },
+    ThinkingStart,
+    ThinkingDelta {
+        #[serde(default)]
+        text: String,
+    },
+    TextStart,
+    TextDelta {
+        #[serde(default)]
+        text: String,
+    },
     AgentToolCall {
         tool: String,
         input_preview: String,
@@ -271,7 +281,7 @@ impl BackendClient {
         &self,
         agent: &str,
         request: &DebugAgentChatRequest,
-    ) -> Result<DebugAgentChatResponse> {
+    ) -> Result<(DebugAgentChatResponse, bool)> {
         let url = self.url(&format!("/api/debug/agents/{agent}/chat"));
         let response = self
             .client
@@ -297,6 +307,8 @@ impl BackendClient {
         let mut buffer = String::new();
         let mut final_response: Option<DebugAgentChatResponse> = None;
         let mut has_tool_activity = false;
+        let mut status_line_visible = false;
+        let mut text_was_streamed = false;
         let chunk_timeout = Duration::from_secs(300); // 5 min per chunk
 
         loop {
@@ -313,13 +325,40 @@ impl BackendClient {
                     Ok(ChatStreamEvent::AgentThinking { model }) => {
                         print!("\x1b[2m⟡ Thinking ({})\x1b[0m", model);
                         io::stdout().flush().ok();
+                        status_line_visible = true;
+                    }
+                    Ok(ChatStreamEvent::ThinkingStart) => {
+                        // AgentThinking status line is already showing
+                    }
+                    Ok(ChatStreamEvent::ThinkingDelta { .. }) => {
+                        // Suppress thinking stream for clean CLI output
+                    }
+                    Ok(ChatStreamEvent::TextStart) => {
+                        if status_line_visible {
+                            print!("\r\x1b[2K");
+                            status_line_visible = false;
+                        }
+                        if has_tool_activity {
+                            println!();
+                        }
+                    }
+                    Ok(ChatStreamEvent::TextDelta { text }) => {
+                        print!("{}", text);
+                        io::stdout().flush().ok();
+                        text_was_streamed = true;
                     }
                     Ok(ChatStreamEvent::AgentToolCall { tool, input_preview }) => {
-                        // Clear thinking status line on first tool call
-                        if !has_tool_activity {
-                            print!("\r\x1b[2K");
-                            has_tool_activity = true;
+                        if text_was_streamed {
+                            println!();
+                            println!();
+                            text_was_streamed = false;
                         }
+                        // Clear thinking status line on first tool call
+                        if !has_tool_activity && status_line_visible {
+                            print!("\r\x1b[2K");
+                            status_line_visible = false;
+                        }
+                        has_tool_activity = true;
                         let preview = single_line_preview(&input_preview, 80);
                         println!(
                             "\x1b[33m  → {}\x1b[2m({})\x1b[0m",
@@ -388,7 +427,9 @@ impl BackendClient {
                         println!();
                     }
                     Ok(ChatStreamEvent::Response { data }) => {
-                        if !has_tool_activity {
+                        if text_was_streamed {
+                            println!(); // newline after last streamed chunk
+                        } else if !has_tool_activity {
                             // Clear thinking status line if no tool calls happened
                             print!("\r\x1b[2K");
                         } else {
@@ -404,7 +445,9 @@ impl BackendClient {
             }
         }
 
-        final_response.context("backend không trả về response event")
+        final_response
+            .map(|r| (r, text_was_streamed))
+            .context("backend không trả về response event")
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -530,8 +573,8 @@ async fn run_chat(backend: &BackendClient, args: ChatArgs) -> Result<()> {
 
     if let Some(message) = args.message.clone() {
         let request = build_chat_request(&args, message, Vec::new(), args.chat_session_id.clone());
-        let response = backend.chat(&agent, &request).await?;
-        print_chat_response(&response, args.show_debug);
+        let (response, streamed) = backend.chat(&agent, &request).await?;
+        print_chat_response(&response, args.show_debug, streamed);
         return Ok(());
     }
 
@@ -595,9 +638,9 @@ async fn run_repl(backend: &BackendClient, args: ChatArgs) -> Result<()> {
             history.clone(),
             Some(chat_session_id.clone()),
         );
-        let response = backend.chat(&agent, &request).await?;
+        let (response, streamed) = backend.chat(&agent, &request).await?;
         println!();
-        print_chat_response(&response, show_debug);
+        print_chat_response(&response, show_debug, streamed);
         println!();
 
         history.push(ChatTurn {
@@ -639,17 +682,19 @@ fn build_chat_request(
     }
 }
 
-fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool) {
-    let assistant_content = render_assistant_content(&response.content);
-
+fn print_chat_response(response: &DebugAgentChatResponse, show_debug: bool, content_already_streamed: bool) {
     println!(
         "\x1b[2m{} | {} | {}\x1b[0m",
         agent_label(&response.agent_role),
         response.provider,
         response.model,
     );
-    println!();
-    println!("{}", assistant_content);
+
+    if !content_already_streamed {
+        let assistant_content = render_assistant_content(&response.content);
+        println!();
+        println!("{}", assistant_content);
+    }
 
     print_tool_call_summary(&response.debug.tool_calls);
 

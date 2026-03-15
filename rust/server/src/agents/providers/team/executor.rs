@@ -199,6 +199,7 @@ impl TeamOrchestrator {
                         }),
                         Some(config.temperature),
                         &mut state.runtime,
+                        None,
                     )
                     .await
                     .with_context(|| {

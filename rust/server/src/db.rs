@@ -389,6 +389,46 @@ pub async fn build_agent_statuses(pool: &SqlitePool) -> Result<Vec<AgentStatusVi
 
 // ─── Instruments ─────────────────────────────────────────────────────
 
+const SEED_INSTRUMENTS: &[(&str, &str, &str)] = &[
+    ("XAUUSD", "Gold / US Dollar", "commodities"),
+    ("XAGUSD", "Silver / US Dollar", "commodities"),
+    ("EURUSD", "Euro / US Dollar", "forex"),
+    ("GBPJPY", "Pound Sterling / Japanese Yen", "forex"),
+    ("USNDAQ100", "US 100 Tech Index", "indices"),
+    ("US30", "Dow Jones Industrial", "indices"),
+    ("US500", "S&P 500 Index", "indices"),
+    ("UK100", "UK FTSE 100", "indices"),
+    ("BTCUSDT", "Bitcoin / Tether", "crypto"),
+    ("WTI", "WTI Crude Oil", "commodities"),
+    ("BRENT", "Brent Crude Oil", "commodities"),
+];
+
+pub async fn seed_instruments(pool: &SqlitePool) -> Result<()> {
+    let now = now_rfc3339();
+
+    // Clean all existing instrument data on startup
+    query("DELETE FROM instruments")
+        .execute(pool)
+        .await
+        .context("cannot clean instruments table")?;
+
+    for &(symbol, name, category) in SEED_INSTRUMENTS {
+        query(
+            r#"
+            INSERT INTO instruments (symbol, name, category, direction, confidence, price, change_pct, timeframe, analysis, key_levels, updated_at)
+            VALUES (?1, ?2, ?3, 'neutral', 0.0, 0.0, 0.0, '', '', '[]', ?4)
+            "#,
+        )
+        .bind(symbol)
+        .bind(name)
+        .bind(category)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn list_instruments(pool: &SqlitePool) -> Result<Vec<InstrumentRow>> {
     query_as::<_, InstrumentRow>("SELECT * FROM instruments ORDER BY symbol ASC")
         .fetch_all(pool)

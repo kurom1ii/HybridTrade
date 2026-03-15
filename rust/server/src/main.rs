@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
     MIGRATOR.run(&db).await.context("cannot run migrations")?;
     db::bootstrap_schedules(&db, &config.schedules).await?;
+    db::seed_instruments(&db).await?;
     let providers = Arc::new(ProviderHub::new(
         config.providers.clone(),
         config.tooling.clone(),

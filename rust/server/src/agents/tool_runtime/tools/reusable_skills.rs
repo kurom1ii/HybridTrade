@@ -1,13 +1,14 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::agents::tool_runtime::utils::required_string_arg;
 
-const SKILLS_DIR: &str = ".skills/learned";
+const LEARNED_DIR: &str = ".skills/learned";
 
 pub(crate) const DESCRIPTION: &str =
-    "Quản lý site-specific skills tự học: save/load/list/delete/match. Agent tự build skill cho mỗi website đã ghé thăm (selectors, workflows, scripts) và tự động tái sử dụng ở lần sau.";
+    "Quản lý learned skills (.md): save/load/list/delete/match. Agent tự tạo skill dạng Markdown cho mỗi website/workflow đã học và tái sử dụng ở lần sau.";
 
 pub(crate) fn schema() -> Value {
     json!({
@@ -16,69 +17,19 @@ pub(crate) fn schema() -> Value {
             "action": {
                 "type": "string",
                 "enum": ["save", "load", "list", "delete", "match"],
-                "description": "Hành động cần thực hiện:\n- save: Lưu skill mới cho domain\n- load: Tải skill theo domain\n- list: Liệt kê tất cả learned skills\n- delete: Xoá skill theo domain\n- match: Tìm skill phù hợp nhất cho URL"
+                "description": "Hành động cần thực hiện:\n- save: Lưu/cập nhật skill (Markdown)\n- load: Đọc skill theo tên\n- list: Liệt kê tất cả learned skills\n- delete: Xoá skill theo tên\n- match: Tìm skill phù hợp nhất cho URL hoặc keyword"
             },
-            "domain": {
+            "name": {
                 "type": "string",
-                "description": "Domain của website (ví dụ: forexfactory.com, investing.com). Dùng cho save/load/delete."
+                "description": "Tên skill (dùng làm filename, ví dụ: fxstreet-gold-news, investing-technical). Dùng cho save/load/delete."
             },
             "url": {
                 "type": "string",
-                "description": "URL đầy đủ để tìm skill phù hợp. Dùng cho action=match."
+                "description": "URL hoặc keyword để tìm skill phù hợp. Dùng cho action=match."
             },
-            "skill_data": {
-                "type": "object",
-                "description": "Dữ liệu skill cần lưu (action=save). Chứa selectors, workflows, scripts, tips.",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Tên mô tả ngắn cho skill"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Mô tả chi tiết skill làm gì"
-                    },
-                    "pages": {
-                        "type": "object",
-                        "description": "Map từ page_type (news, calendar, technical, article, search) tới config riêng",
-                        "additionalProperties": {
-                            "type": "object",
-                            "properties": {
-                                "url_pattern": {
-                                    "type": "string",
-                                    "description": "URL pattern hoặc path cho page type này"
-                                },
-                                "selectors": {
-                                    "type": "object",
-                                    "description": "CSS selectors cho các phần tử quan trọng",
-                                    "additionalProperties": { "type": "string" }
-                                },
-                                "extract_script": {
-                                    "type": "string",
-                                    "description": "JavaScript function body cho evaluate_script"
-                                },
-                                "wait_for": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "Các text cần chờ xuất hiện trước khi tương tác"
-                                },
-                                "cookie_dismiss": {
-                                    "type": "string",
-                                    "description": "Selector hoặc uid để dismiss popup cookie consent"
-                                }
-                            }
-                        }
-                    },
-                    "tips": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Mẹo/lưu ý khi tương tác với website này"
-                    },
-                    "last_verified": {
-                        "type": "string",
-                        "description": "Ngày lần cuối kiểm tra skill này hoạt động (YYYY-MM-DD)"
-                    }
-                }
+            "content": {
+                "type": "string",
+                "description": "Nội dung Markdown của skill (action=save). Chứa mô tả, selectors, scripts, tips, workflows."
             }
         },
         "required": ["action"],
@@ -86,35 +37,38 @@ pub(crate) fn schema() -> Value {
     })
 }
 
-pub(crate) async fn execute(arguments: Value) -> Result<Value> {
+pub(crate) async fn execute(arguments: Value, workspace_root: &Path) -> Result<Value> {
     let action = required_string_arg(&arguments, "action")?;
 
     match action.as_str() {
-        "save" => execute_save(&arguments).await,
-        "load" => execute_load(&arguments).await,
-        "list" => execute_list().await,
-        "delete" => execute_delete(&arguments).await,
-        "match" => execute_match(&arguments).await,
+        "save" => execute_save(&arguments, workspace_root).await,
+        "load" => execute_load(&arguments, workspace_root).await,
+        "list" => execute_list(workspace_root).await,
+        "delete" => execute_delete(&arguments, workspace_root).await,
+        "match" => execute_match(&arguments, workspace_root).await,
         _ => bail!("action `{action}` không hợp lệ, cần: save/load/list/delete/match"),
     }
 }
 
-async fn ensure_skills_dir() -> Result<std::path::PathBuf> {
-    let dir = std::path::PathBuf::from(SKILLS_DIR);
+fn learned_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(LEARNED_DIR)
+}
+
+async fn ensure_learned_dir(workspace_root: &Path) -> Result<PathBuf> {
+    let dir = learned_dir(workspace_root);
     if !dir.exists() {
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("không thể tạo thư mục {SKILLS_DIR}"))?;
+            .with_context(|| format!("không thể tạo thư mục {}", dir.display()))?;
     }
     Ok(dir)
 }
 
-fn domain_to_filename(domain: &str) -> String {
-    domain
-        .trim()
+fn name_to_filename(name: &str) -> String {
+    name.trim()
         .to_ascii_lowercase()
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-        + ".json"
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '], "-")
+        + ".md"
 }
 
 fn extract_domain_from_url(url: &str) -> Option<String> {
@@ -136,28 +90,17 @@ fn extract_domain_from_url(url: &str) -> Option<String> {
     Some(host.to_string())
 }
 
-async fn execute_save(arguments: &Value) -> Result<Value> {
-    let domain = required_string_arg(arguments, "domain")?;
-    let skill_data = arguments
-        .get("skill_data")
-        .ok_or_else(|| anyhow::anyhow!("thiếu skill_data cho action=save"))?;
+async fn execute_save(arguments: &Value, workspace_root: &Path) -> Result<Value> {
+    let name = required_string_arg(arguments, "name")?;
+    let content = arguments
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("thiếu `content` (Markdown) cho action=save"))?;
 
-    let dir = ensure_skills_dir().await?;
-    let filename = domain_to_filename(&domain);
+    let dir = ensure_learned_dir(workspace_root).await?;
+    let filename = name_to_filename(&name);
     let filepath = dir.join(&filename);
     let existed = filepath.exists();
-
-    let mut data = skill_data.clone();
-    if let Value::Object(ref mut map) = data {
-        map.insert("domain".to_string(), Value::String(domain.clone()));
-        if !map.contains_key("last_verified") {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            map.insert("last_verified".to_string(), Value::String(today));
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&data)
-        .context("không thể serialize skill_data")?;
 
     fs::write(&filepath, content.as_bytes())
         .await
@@ -166,50 +109,48 @@ async fn execute_save(arguments: &Value) -> Result<Value> {
     Ok(json!({
         "ok": true,
         "action": "save",
-        "domain": domain,
+        "name": name,
         "file": filepath.display().to_string(),
         "created": !existed,
         "message": if existed {
-            format!("Đã cập nhật skill cho {domain}")
+            format!("Đã cập nhật skill `{name}`")
         } else {
-            format!("Đã tạo skill mới cho {domain}")
+            format!("Đã tạo skill mới `{name}`")
         }
     }))
 }
 
-async fn execute_load(arguments: &Value) -> Result<Value> {
-    let domain = required_string_arg(arguments, "domain")?;
-    let dir = ensure_skills_dir().await?;
-    let filename = domain_to_filename(&domain);
+async fn execute_load(arguments: &Value, workspace_root: &Path) -> Result<Value> {
+    let name = required_string_arg(arguments, "name")?;
+    let dir = ensure_learned_dir(workspace_root).await?;
+    let filename = name_to_filename(&name);
     let filepath = dir.join(&filename);
 
     if !filepath.exists() {
         return Ok(json!({
             "ok": false,
             "action": "load",
-            "domain": domain,
+            "name": name,
             "found": false,
-            "message": format!("Chưa có learned skill cho {domain}")
+            "message": format!("Chưa có learned skill `{name}`")
         }));
     }
 
     let content = fs::read_to_string(&filepath)
         .await
         .with_context(|| format!("không thể đọc file `{}`", filepath.display()))?;
-    let data: Value = serde_json::from_str(&content)
-        .with_context(|| format!("file `{}` không phải JSON hợp lệ", filepath.display()))?;
 
     Ok(json!({
         "ok": true,
         "action": "load",
-        "domain": domain,
+        "name": name,
         "found": true,
-        "skill": data,
+        "content": content,
     }))
 }
 
-async fn execute_list() -> Result<Value> {
-    let dir = ensure_skills_dir().await?;
+async fn execute_list(workspace_root: &Path) -> Result<Value> {
+    let dir = ensure_learned_dir(workspace_root).await?;
     let mut entries = Vec::new();
 
     let mut read_dir = fs::read_dir(&dir)
@@ -218,11 +159,11 @@ async fn execute_list() -> Result<Value> {
 
     while let Ok(Some(entry)) = read_dir.next_entry().await {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
 
-        let domain = path
+        let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
@@ -231,34 +172,28 @@ async fn execute_list() -> Result<Value> {
         let metadata = fs::metadata(&path).await.ok();
         let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
 
+        // Đọc dòng đầu làm summary
         let summary = match fs::read_to_string(&path).await {
-            Ok(content) => serde_json::from_str::<Value>(&content)
-                .ok()
-                .and_then(|v| {
-                    let name = v.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-                    let desc = v.get("description").and_then(Value::as_str).unwrap_or("").to_string();
-                    let last_verified = v
-                        .get("last_verified")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let pages_count = v
-                        .get("pages")
-                        .and_then(Value::as_object)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
-                    Some(json!({
-                        "name": name,
-                        "description": desc,
-                        "last_verified": last_verified,
-                        "pages_count": pages_count,
-                    }))
-                }),
-            Err(_) => None,
+            Ok(content) => {
+                let first_line = content
+                    .lines()
+                    .find(|l| {
+                        let trimmed = l.trim();
+                        !trimmed.is_empty() && !trimmed.starts_with('#')
+                    })
+                    .unwrap_or("")
+                    .trim();
+                if first_line.len() > 120 {
+                    format!("{}...", &first_line[..120])
+                } else {
+                    first_line.to_string()
+                }
+            }
+            Err(_) => String::new(),
         };
 
         entries.push(json!({
-            "domain": domain,
+            "name": name,
             "file": path.display().to_string(),
             "size_bytes": size,
             "summary": summary,
@@ -266,9 +201,9 @@ async fn execute_list() -> Result<Value> {
     }
 
     entries.sort_by(|a, b| {
-        let da = a.get("domain").and_then(Value::as_str).unwrap_or("");
-        let db = b.get("domain").and_then(Value::as_str).unwrap_or("");
-        da.cmp(db)
+        let na = a.get("name").and_then(Value::as_str).unwrap_or("");
+        let nb = b.get("name").and_then(Value::as_str).unwrap_or("");
+        na.cmp(nb)
     });
 
     Ok(json!({
@@ -279,18 +214,18 @@ async fn execute_list() -> Result<Value> {
     }))
 }
 
-async fn execute_delete(arguments: &Value) -> Result<Value> {
-    let domain = required_string_arg(arguments, "domain")?;
-    let dir = ensure_skills_dir().await?;
-    let filename = domain_to_filename(&domain);
+async fn execute_delete(arguments: &Value, workspace_root: &Path) -> Result<Value> {
+    let name = required_string_arg(arguments, "name")?;
+    let dir = ensure_learned_dir(workspace_root).await?;
+    let filename = name_to_filename(&name);
     let filepath = dir.join(&filename);
 
     if !filepath.exists() {
         return Ok(json!({
             "ok": false,
             "action": "delete",
-            "domain": domain,
-            "message": format!("Không tìm thấy skill cho {domain} để xoá")
+            "name": name,
+            "message": format!("Không tìm thấy skill `{name}` để xoá")
         }));
     }
 
@@ -301,12 +236,12 @@ async fn execute_delete(arguments: &Value) -> Result<Value> {
     Ok(json!({
         "ok": true,
         "action": "delete",
-        "domain": domain,
-        "message": format!("Đã xoá skill cho {domain}")
+        "name": name,
+        "message": format!("Đã xoá skill `{name}`")
     }))
 }
 
-async fn execute_match(arguments: &Value) -> Result<Value> {
+async fn execute_match(arguments: &Value, workspace_root: &Path) -> Result<Value> {
     let url = arguments
         .get("url")
         .and_then(Value::as_str)
@@ -314,78 +249,71 @@ async fn execute_match(arguments: &Value) -> Result<Value> {
         .filter(|v| !v.is_empty())
         .ok_or_else(|| anyhow::anyhow!("thiếu tham số `url` cho action=match"))?;
 
-    let domain = match extract_domain_from_url(url) {
-        Some(d) => d,
-        None => {
-            return Ok(json!({
-                "ok": false,
-                "action": "match",
-                "url": url,
-                "found": false,
-                "message": "Không thể trích xuất domain từ URL"
+    let domain = extract_domain_from_url(url);
+    let keyword = domain.as_deref().unwrap_or(url).to_ascii_lowercase();
+
+    let dir = ensure_learned_dir(workspace_root).await?;
+    let mut matches = Vec::new();
+
+    let mut read_dir = fs::read_dir(&dir)
+        .await
+        .with_context(|| format!("không thể đọc thư mục `{}`", dir.display()))?;
+
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        // Match by filename hoặc nội dung chứa domain/keyword
+        let name_match = name.contains(&keyword) || keyword.contains(&name);
+
+        let content_match = if !name_match {
+            match fs::read_to_string(&path).await {
+                Ok(content) => {
+                    let lower = content.to_ascii_lowercase();
+                    lower.contains(&keyword) || lower.contains(url)
+                }
+                Err(_) => false,
+            }
+        } else {
+            false
+        };
+
+        if name_match || content_match {
+            let content = fs::read_to_string(&path).await.unwrap_or_default();
+            matches.push(json!({
+                "name": path.file_stem().and_then(|s| s.to_str()).unwrap_or(""),
+                "file": path.display().to_string(),
+                "content": content,
+                "match_type": if name_match { "name" } else { "content" },
             }));
         }
-    };
+    }
 
-    let dir = ensure_skills_dir().await?;
-    let filename = domain_to_filename(&domain);
-    let filepath = dir.join(&filename);
-
-    if !filepath.exists() {
+    if matches.is_empty() {
         return Ok(json!({
             "ok": true,
             "action": "match",
             "url": url,
-            "domain": domain,
             "found": false,
-            "message": format!("Chưa có learned skill cho {domain}. Hãy khám phá website và save skill mới sau khi xong.")
+            "message": format!("Chưa có learned skill phù hợp cho `{url}`. Hãy tạo skill mới sau khi xong.")
         }));
     }
-
-    let content = fs::read_to_string(&filepath)
-        .await
-        .with_context(|| format!("không thể đọc file `{}`", filepath.display()))?;
-    let data: Value = serde_json::from_str(&content)
-        .with_context(|| format!("file `{}` không phải JSON hợp lệ", filepath.display()))?;
-
-    // Tìm page config phù hợp nhất dựa trên URL path
-    let url_path = url
-        .find("://")
-        .map(|i| &url[i + 3..])
-        .unwrap_or(url)
-        .split('/')
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join("/");
-
-    let matched_page = data
-        .get("pages")
-        .and_then(Value::as_object)
-        .and_then(|pages| {
-            pages.iter().find(|(_, config)| {
-                config
-                    .get("url_pattern")
-                    .and_then(Value::as_str)
-                    .map(|pattern| url_path.contains(pattern) || url.contains(pattern))
-                    .unwrap_or(false)
-            })
-        })
-        .map(|(key, config)| {
-            json!({
-                "page_type": key,
-                "config": config,
-            })
-        });
 
     Ok(json!({
         "ok": true,
         "action": "match",
         "url": url,
-        "domain": domain,
         "found": true,
-        "skill": data,
-        "matched_page": matched_page,
-        "message": format!("Tìm thấy learned skill cho {domain}. Dùng selectors và scripts trong skill để tương tác hiệu quả.")
+        "matches": matches,
+        "message": format!("Tìm thấy {} skill phù hợp. Đọc content để tái sử dụng.", matches.len())
     }))
 }
 
@@ -419,7 +347,8 @@ mod tests {
 
     #[test]
     fn domain_to_filename_sanitizes() {
-        assert_eq!(domain_to_filename("forexfactory.com"), "forexfactory.com.json");
-        assert_eq!(domain_to_filename("investing.com"), "investing.com.json");
+        assert_eq!(name_to_filename("fxstreet-gold-news"), "fxstreet-gold-news.md");
+        assert_eq!(name_to_filename("investing.com"), "investing.com.md");
+        assert_eq!(name_to_filename("My Cool Skill"), "my-cool-skill.md");
     }
 }

@@ -76,17 +76,6 @@ function apiToInstrument(iv: InstrumentView): Instrument {
   };
 }
 
-const fallbackInstruments: Instrument[] = [
-  {
-    symbol: "XAU/USD", name: "Gold", price: "2,178.40", change: "+0.89%", type: "profit",
-    category: "COMMODITIES", confidence: 87, direction: "BUY",
-    session: "London / New York", timeframe: "H4",
-    keyLevels: ["2,155.00", "2,170.00", "2,195.00", "2,210.00"],
-    summary: "Gold dang trong xu huong tang manh, pha ky 2,170 resistance. RSI(14) o vung 62, chua qua mua. DXY suy yeu ho tro Gold tiep tuc rally. Target 2,210 neu giu duoc 2,155.",
-    entry: "2,175.00", tp: "2,210.00", sl: "2,155.00",
-  },
-];
-
 // Money Flow chart
 const flowSymbols = ["XAU/USD"] as const;
 const flowColors: Record<string, string> = {
@@ -659,20 +648,6 @@ export default function DashboardPage() {
     "WTI", "BRENT",
   ];
 
-  const SYMBOL_NAMES: Record<string, [string, Category, string]> = {
-    XAUUSD: ["Gold / US Dollar", "COMMODITIES", "XAU/USD"],
-    XAGUSD: ["Silver / US Dollar", "COMMODITIES", "XAG/USD"],
-    EURUSD: ["Euro / US Dollar", "FOREX", "EUR/USD"],
-    GBPJPY: ["Pound Sterling / Japanese Yen", "FOREX", "GBP/JPY"],
-    USNDAQ100: ["US 100 Tech Index", "INDICES", "NASDAQ"],
-    US30: ["Dow Jones Industrial", "INDICES", "US30"],
-    US500: ["S&P 500 Index", "INDICES", "US500"],
-    UK100: ["UK FTSE 100", "INDICES", "UK100"],
-    BTCUSDT: ["Bitcoin / Tether", "CRYPTO", "BTC/USDT"],
-    WTI: ["WTI Crude Oil", "COMMODITIES", "WTI"],
-    BRENT: ["Brent Crude Oil", "COMMODITIES", "BRENT"],
-  };
-
   const { prices: livePrices } = usePrices({
     symbols: DASHBOARD_SYMBOLS,
   });
@@ -689,32 +664,13 @@ export default function DashboardPage() {
     // Build a map of live prices keyed by symbol
     const priceMap = new Map(livePrices.map((p) => [p.symbol, p]));
 
-    // Merge: for each dashboard symbol, use backend analysis if available, overlay live price
-    return DASHBOARD_SYMBOLS.map((sym) => {
+    // Merge: for each dashboard symbol, use backend data + overlay live price
+    return DASHBOARD_SYMBOLS.flatMap((sym) => {
       const apiData = apiMap.get(sym);
-      const livePrice = priceMap.get(sym);
-      const [defaultName, defaultCategory, displaySymbol] = SYMBOL_NAMES[sym] || [sym, "FOREX" as Category, sym];
+      if (!apiData) return [];
 
-      // Start with backend data or defaults
-      let inst: Instrument;
-      if (apiData) {
-        inst = apiToInstrument(apiData);
-      } else {
-        inst = {
-          symbol: displaySymbol,
-          name: defaultName,
-          price: "—",
-          change: "—",
-          type: "profit",
-          category: defaultCategory,
-          confidence: 0,
-          direction: "NEUTRAL",
-          summary: "Đang chờ phân tích từ agent AI.",
-          entry: "-", tp: "-", sl: "-",
-          session: "-", timeframe: "-",
-          keyLevels: [],
-        };
-      }
+      const livePrice = priceMap.get(sym);
+      const inst = apiToInstrument(apiData);
 
       // Overlay live price if available
       if (livePrice) {
@@ -726,7 +682,7 @@ export default function DashboardPage() {
         inst.type = livePrice.changePct >= 0 ? "profit" : "loss";
       }
 
-      return inst;
+      return [inst];
     });
   }, [apiInstruments, livePrices]);
 

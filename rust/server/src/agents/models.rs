@@ -9,6 +9,14 @@ pub enum ChatStreamEvent {
     AgentThinking {
         model: String,
     },
+    ThinkingStart,
+    ThinkingDelta {
+        text: String,
+    },
+    TextStart,
+    TextDelta {
+        text: String,
+    },
     AgentToolCall {
         tool: String,
         input_preview: String,

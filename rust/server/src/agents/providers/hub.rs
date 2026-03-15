@@ -1,11 +1,12 @@
 use std::{
-    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::Write,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
+
+use dashmap::DashMap;
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Client;
@@ -26,12 +27,11 @@ use super::super::{
 use super::{
     capabilities::{AgentCapabilityProfile, CapabilityCatalog, TurnSkillContext},
     history::{
-        collapse_whitespace, compact_history_for_provider, looks_like_context_limit_error,
-        normalize_chat_session_id, normalize_history, truncate_chars, CompactMode,
-        HistoryCompaction,
+        collapse_whitespace, compact_history_for_retry, normalize_chat_session_id,
+        normalize_history, truncate_chars, HistoryCompaction,
     },
     prompt::{build_system_prompt, build_user_message, resolve_system_prompt_log_path},
-    protocols::{call_provider, reset_provider_http_log_file},
+    protocols::{call_provider, reset_provider_http_log_file, ContextLimitExceeded},
     team::TeamOrchestrator,
 };
 
@@ -42,7 +42,7 @@ pub struct ProviderHub {
     client: Client,
     config: ProvidersConfig,
     capabilities: CapabilityCatalog,
-    chat_sessions: Arc<Mutex<HashMap<String, CachedChatRuntime>>>,
+    chat_sessions: DashMap<String, CachedChatRuntime>,
     system_prompt_log_lock: Arc<std::sync::Mutex<()>>,
     system_prompt_log_path: PathBuf,
 }
@@ -110,7 +110,7 @@ impl ProviderHub {
             client,
             config,
             capabilities: CapabilityCatalog::new(tooling, skills),
-            chat_sessions: Arc::new(Mutex::new(HashMap::new())),
+            chat_sessions: DashMap::new(),
             system_prompt_log_lock: Arc::new(std::sync::Mutex::new(())),
             system_prompt_log_path,
         })
@@ -590,14 +590,12 @@ impl ProviderHub {
         let now = Instant::now();
         let cache_key = cached_tool_runtime_key(agent_role, chat_session_id);
 
-        {
-            let mut sessions = self.chat_sessions.lock().await;
-            sessions.retain(|_, entry| now.duration_since(entry.last_used) <= CHAT_SESSION_TTL);
+        self.chat_sessions
+            .retain(|_, entry| now.duration_since(entry.last_used) <= CHAT_SESSION_TTL);
 
-            if let Some(entry) = sessions.get_mut(&cache_key) {
-                entry.last_used = now;
-                return entry.runtime.clone();
-            }
+        if let Some(mut entry) = self.chat_sessions.get_mut(&cache_key) {
+            entry.last_used = now;
+            return entry.runtime.clone();
         }
 
         let runtime = Arc::new(Mutex::new(
@@ -606,8 +604,7 @@ impl ProviderHub {
                 .await,
         ));
 
-        let mut sessions = self.chat_sessions.lock().await;
-        sessions.insert(
+        self.chat_sessions.insert(
             cache_key,
             CachedChatRuntime {
                 runtime: runtime.clone(),
@@ -661,13 +658,8 @@ impl ProviderHub {
 
         let system_prompt =
             build_system_prompt(agent_role, context, runtime_continuity_note.as_deref());
-        let mut compacted = compact_history_for_provider(
-            config,
-            &system_prompt,
-            &effective_history,
-            &provider_message,
-            CompactMode::Normal,
-        );
+        let mut compacted =
+            HistoryCompaction::unchanged(&system_prompt, &effective_history, &provider_message);
 
         self.log_system_prompt_attempt(
             agent_role,
@@ -676,7 +668,7 @@ impl ProviderHub {
             chat_session_id.as_deref(),
             &turn_skills.clean_message,
             &compacted,
-            "normal",
+            "initial",
         );
 
         self.log_user_message(
@@ -701,7 +693,7 @@ impl ProviderHub {
             max_tokens,
             temperature,
             tool_runtime,
-            "normal",
+            "initial",
         );
 
         // Emit thinking event — report main model (first call uses this)
@@ -722,71 +714,132 @@ impl ProviderHub {
             max_tokens,
             temperature,
             tool_runtime,
+            stream_tx.as_ref(),
         )
         .await;
 
         if let Err(error) = call_result {
-            if looks_like_context_limit_error(&error.to_string()) {
-                let retry_compacted = compact_history_for_provider(
-                    config,
+            if error.downcast_ref::<ContextLimitExceeded>().is_some() {
+                // Retry 1: normal compaction
+                let retry1 = compact_history_for_retry(
                     &system_prompt,
                     &effective_history,
                     &provider_message,
-                    CompactMode::Aggressive,
+                    config.compact_keep_recent_turns,
+                    config.compact_summary_chars,
+                    1,
                 );
 
-                if retry_compacted.is_more_compact_than(&compacted) {
-                    self.log_system_prompt_attempt(
-                        agent_role,
-                        provider,
-                        &config.model,
-                        chat_session_id.as_deref(),
-                        &turn_skills.clean_message,
-                        &retry_compacted,
-                        "aggressive_retry",
-                    );
+                self.log_system_prompt_attempt(
+                    agent_role,
+                    provider,
+                    &config.model,
+                    chat_session_id.as_deref(),
+                    &turn_skills.clean_message,
+                    &retry1,
+                    "retry-1",
+                );
 
-                    self.log_assistant_request(
-                        agent_role,
-                        provider,
-                        &config.model,
-                        chat_session_id.as_deref(),
-                        turn_skills.command.as_deref(),
-                        &active_skill_names,
-                        &turn_skills.clean_message,
-                        &retry_compacted,
-                        max_tokens,
-                        temperature,
-                        tool_runtime,
-                        "aggressive_retry",
-                    );
+                self.log_assistant_request(
+                    agent_role,
+                    provider,
+                    &config.model,
+                    chat_session_id.as_deref(),
+                    turn_skills.command.as_deref(),
+                    &active_skill_names,
+                    &turn_skills.clean_message,
+                    &retry1,
+                    max_tokens,
+                    temperature,
+                    tool_runtime,
+                    "retry-1",
+                );
 
-                    match call_provider(
-                        &self.client,
-                        provider,
-                        config,
-                        api_key,
-                        &retry_compacted.system_prompt,
-                        &retry_compacted.history,
-                        &provider_message,
-                        max_tokens,
-                        temperature,
-                        tool_runtime,
-                    )
-                    .await
-                    {
-                        Ok(value) => {
-                            compacted = retry_compacted;
-                            call_result = Ok(value);
-                        }
-                        Err(retry_error) => {
-                            return Err(retry_error.context(
-                                "provider vẫn lỗi sau khi backend auto-compact mạnh hơn một lần",
-                            ));
+                match call_provider(
+                    &self.client,
+                    provider,
+                    config,
+                    api_key,
+                    &retry1.system_prompt,
+                    &retry1.history,
+                    &provider_message,
+                    max_tokens,
+                    temperature,
+                    tool_runtime,
+                    stream_tx.as_ref(),
+                )
+                .await
+                {
+                    Ok(value) => {
+                        compacted = retry1;
+                        call_result = Ok(value);
+                    }
+                    Err(retry1_error) => {
+                        if retry1_error.downcast_ref::<ContextLimitExceeded>().is_some() {
+                            // Retry 2: aggressive compaction
+                            let retry2 = compact_history_for_retry(
+                                &system_prompt,
+                                &effective_history,
+                                &provider_message,
+                                config.compact_keep_recent_turns,
+                                config.compact_summary_chars,
+                                2,
+                            );
+
+                            self.log_system_prompt_attempt(
+                                agent_role,
+                                provider,
+                                &config.model,
+                                chat_session_id.as_deref(),
+                                &turn_skills.clean_message,
+                                &retry2,
+                                "retry-2",
+                            );
+
+                            self.log_assistant_request(
+                                agent_role,
+                                provider,
+                                &config.model,
+                                chat_session_id.as_deref(),
+                                turn_skills.command.as_deref(),
+                                &active_skill_names,
+                                &turn_skills.clean_message,
+                                &retry2,
+                                max_tokens,
+                                temperature,
+                                tool_runtime,
+                                "retry-2",
+                            );
+
+                            match call_provider(
+                                &self.client,
+                                provider,
+                                config,
+                                api_key,
+                                &retry2.system_prompt,
+                                &retry2.history,
+                                &provider_message,
+                                max_tokens,
+                                temperature,
+                                tool_runtime,
+                                stream_tx.as_ref(),
+                            )
+                            .await
+                            {
+                                Ok(value) => {
+                                    compacted = retry2;
+                                    call_result = Ok(value);
+                                }
+                                Err(retry2_error) => {
+                                    return Err(retry2_error.context(
+                                        "provider vẫn lỗi sau khi backend auto-compact 2 lần",
+                                    ));
+                                }
+                            }
+                        } else {
+                            return Err(retry1_error);
                         }
                     }
-                } else {
-                    return Err(error);
                 }
             } else {
                 return Err(error);

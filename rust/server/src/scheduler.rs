@@ -252,26 +252,32 @@ async fn execute_schedule(
 
     match result {
         Ok(response) => {
-            let truncated = if response.content.len() > 500 {
-                format!("{}...", safe_truncate(&response.content, 500))
-            } else {
-                response.content.clone()
-            };
-
-            db::update_schedule_status(
-                &state.db,
-                &schedule.id,
-                "completed",
-                Some(&truncated),
-            )
-            .await?;
-
             let tool_names: Vec<String> = response
                 .debug
                 .tool_calls
                 .iter()
                 .map(|tc| format!("{} [{}]", tc.name, tc.status))
                 .collect();
+
+            // Store structured JSON with full detail for frontend consumption
+            let result_json = json!({
+                "content": safe_truncate(&response.content, 8000),
+                "provider": response.provider,
+                "model": response.model,
+                "tool_calls": response.debug.tool_calls,
+                "system_prompt": &response.debug.system_prompt,
+                "available_tools": response.debug.available_tools,
+                "history_count": response.debug.history_count,
+            });
+            let result_string = serde_json::to_string(&result_json).unwrap_or_default();
+
+            db::update_schedule_status(
+                &state.db,
+                &schedule.id,
+                "completed",
+                Some(&result_string),
+            )
+            .await?;
 
             append_task_log(
                 &schedule.name,
@@ -284,6 +290,12 @@ async fn execute_schedule(
                 &tool_names,
             );
 
+            let content_preview = if response.content.len() > 200 {
+                format!("{}...", safe_truncate(&response.content, 200))
+            } else {
+                response.content.clone()
+            };
+
             state.events.publish(
                 "job.status",
                 &json!({
@@ -293,7 +305,7 @@ async fn execute_schedule(
                     "provider": response.provider,
                     "model": response.model,
                     "tool_calls": tool_names.len(),
-                    "result_preview": safe_truncate(&truncated, 200),
+                    "result_preview": content_preview,
                 }),
             );
 
@@ -310,7 +322,7 @@ async fn execute_schedule(
             }
             info!(
                 "[SCHEDULER] Agent response:\n─────────────────────────────\n{}\n─────────────────────────────",
-                truncated
+                content_preview
             );
         }
         Err(error) => {

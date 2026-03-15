@@ -69,7 +69,7 @@ impl ToolRuntime {
                     tools::update_dashboard::execute(arguments).await
                 }
                 NativeToolKind::ReusableSkills => {
-                    tools::reusable_skills::execute(arguments).await
+                    tools::reusable_skills::execute(arguments, &self.workspace_root).await
                 }
             }
         })

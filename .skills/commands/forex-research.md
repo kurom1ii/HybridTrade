@@ -35,7 +35,7 @@ Skill này biến Kuromi thành một forex research agent toàn diện, hoạt 
 | Website | URL | Dùng để |
 |---------|-----|---------|
 | TradingView | `https://www.tradingview.com/chart/` | Biểu đồ tương tác, chỉ báo kỹ thuật đầy đủ |
-| Investing.com Technical | `https://www.investing.com/technical/` | Tổng hợp chỉ báo (MA, RSI, MACD, Stochastic...) dạng bảng |
+| Investing.com Technical | `https://www.investing.com/currencies/xau-usd-technical` | Tổng hợp chỉ báo (MA, RSI, MACD, Stochastic...) dạng bảng. URL: `/currencies/{symbol}-technical` |
 | TradingView Technicals | `https://www.tradingview.com/symbols/XAUUSD/technicals/` | Gauge tổng hợp Buy/Sell/Neutral cho symbol cụ thể |
 
 > **Lưu ý**: Thay `XAUUSD` trong URL TradingView bằng symbol cần tra (ví dụ: `EURUSD`, `BTCUSDT`, `FX:GBPUSD`).

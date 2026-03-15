@@ -12,7 +12,7 @@ use axum::{
 };
 use futures_util::{Stream, StreamExt};
 use serde_json::json;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
@@ -31,6 +31,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dashboard", get(dashboard))
         .route("/api/agents/status", get(agent_status))
         .route("/api/schedules", get(list_schedules).post(create_schedule))
+        .route("/api/schedules/stream", get(schedule_stream))
         .route("/api/schedules/:id", patch(update_schedule).delete(delete_schedule))
         .route("/api/instruments", get(list_instruments))
         .route("/api/instruments/:symbol", get(get_instrument).put(upsert_instrument))
@@ -228,6 +229,36 @@ async fn debug_agent_chat(
         Ok(Event::default().data(serde_json::to_string(&event).unwrap_or_default()))
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+// ─── Schedule SSE Stream ─────────────────────────────────────────────
+
+async fn schedule_stream(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.events.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(event) if event.event_type == "job.status" => {
+                    let sse = Event::default()
+                        .event("job_status")
+                        .json_data(&event.payload)
+                        .unwrap_or_else(|_| Event::default().data("{}"));
+                    yield Ok(sse);
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    info!("[SSE] schedule_stream lagged {n} events");
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 // ─── Instruments ─────────────────────────────────────────────────────

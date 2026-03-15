@@ -87,3 +87,21 @@ export interface UpsertInstrumentPayload {
   analysis?: string;
   key_levels?: { price: number; label: string; type: string }[];
 }
+
+export interface ScheduleResultDetail {
+  content: string;
+  provider: string;
+  model: string;
+  tool_calls: ToolCallDetail[];
+  system_prompt: string;
+  available_tools: string[];
+  history_count: number;
+}
+
+export interface ToolCallDetail {
+  name: string;
+  source: string;
+  status: string;
+  input: Record<string, unknown>;
+  output_preview: string;
+}

@@ -14,7 +14,7 @@ pub(crate) fn schema() -> Value {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 50,
-                "description": "Số lượng tin tức cần lấy, mặc định 20"
+                "description": "Số lượng tin tức cần lấy, mặc định 50"
             },
             "important": {
                 "type": "boolean",

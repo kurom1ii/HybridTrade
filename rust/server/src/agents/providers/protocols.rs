@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
+    fmt,
     fs,
     path::PathBuf,
     sync::{Mutex, OnceLock},
@@ -7,11 +8,15 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use futures_util::StreamExt;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::warn;
 
+use crate::agents::models::ChatStreamEvent;
 use crate::config::ProviderConfig;
 
 use super::{
@@ -19,6 +24,24 @@ use super::{
 };
 
 const DEFAULT_PROVIDER_HTTP_LOG_PATH: &str = "./logs/provider-http-requests.json";
+
+#[derive(Debug)]
+pub(super) struct ContextLimitExceeded {
+    pub provider: String,
+    pub detail: String,
+}
+
+impl fmt::Display for ContextLimitExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "context limit exceeded for provider {}: {}",
+            self.provider, self.detail
+        )
+    }
+}
+
+impl std::error::Error for ContextLimitExceeded {}
 
 static PROVIDER_HTTP_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -36,6 +59,71 @@ struct AnthropicToolUse {
     input: Value,
 }
 
+// SSE streaming deserialization types (Anthropic only)
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AnthropicSseEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    delta: Option<AnthropicSseDelta>,
+    #[serde(default)]
+    content_block: Option<AnthropicSseContentBlock>,
+    #[serde(default)]
+    message: Option<AnthropicSseMessage>,
+    #[serde(default)]
+    usage: Option<AnthropicSseUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AnthropicSseDelta {
+    #[serde(rename = "type", default)]
+    delta_type: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+    #[serde(default)]
+    partial_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicSseContentBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AnthropicSseMessage {
+    #[serde(default)]
+    usage: Option<AnthropicSseUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AnthropicSseUsage {
+    #[serde(default)]
+    input_tokens: Option<u32>,
+    #[serde(default)]
+    output_tokens: Option<u32>,
+}
+
+struct AnthropicStreamResult {
+    text: String,
+    content_blocks: Vec<Value>,
+    tool_calls: Vec<AnthropicToolUse>,
+    stop_reason: String,
+}
+
 pub(super) async fn call_provider(
     client: &Client,
     provider: ProviderKind,
@@ -47,6 +135,7 @@ pub(super) async fn call_provider(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     tool_runtime: &mut ToolRuntime,
+    stream_tx: Option<&mpsc::UnboundedSender<ChatStreamEvent>>,
 ) -> Result<String> {
     match provider {
         ProviderKind::OpenAi => {
@@ -73,6 +162,7 @@ pub(super) async fn call_provider(
                 message,
                 max_tokens,
                 tool_runtime,
+                stream_tx,
             )
             .await
         }
@@ -166,6 +256,7 @@ async fn call_anthropic(
     message: &str,
     max_tokens: Option<u32>,
     tool_runtime: &mut ToolRuntime,
+    stream_tx: Option<&mpsc::UnboundedSender<ChatStreamEvent>>,
 ) -> Result<String> {
     let mut messages = history
         .iter()
@@ -226,6 +317,47 @@ async fn call_anthropic(
 
         is_first_call = false;
 
+        // Streaming path: parse SSE events in real-time
+        if let Some(tx) = stream_tx {
+            payload["stream"] = json!(true);
+
+            let response = send_anthropic_request(client, config, api_key, &payload).await?;
+            let result = stream_anthropic_response(response, tx).await?;
+
+            if result.tool_calls.is_empty() || result.stop_reason != "tool_use" {
+                return Ok(result.text);
+            }
+
+            // Push assistant message with all content blocks
+            messages.push(json!({
+                "role": "assistant",
+                "content": result.content_blocks,
+            }));
+
+            // Execute tools — concurrent when multiple, sequential when single
+            let calls: Vec<(String, Value)> = result
+                .tool_calls
+                .iter()
+                .map(|tu| (tu.name.clone(), tu.input.clone()))
+                .collect();
+            let outputs = tool_runtime.execute_concurrent(calls).await;
+
+            let mut tool_results = Vec::new();
+            for (tool_use, output) in result.tool_calls.iter().zip(outputs) {
+                tool_results.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": [{ "type": "text", "text": output }],
+                }));
+            }
+            messages.push(json!({
+                "role": "user",
+                "content": tool_results,
+            }));
+            continue;
+        }
+
+        // Non-streaming path: existing behavior unchanged
         let response = send_anthropic_request(client, config, api_key, &payload).await?;
 
         let payload = parse_provider_response(response, "anthropic").await?;
@@ -428,6 +560,161 @@ fn extract_anthropic_tool_uses(payload: &Value) -> Vec<AnthropicToolUse> {
         .collect()
 }
 
+async fn stream_anthropic_response(
+    response: reqwest::Response,
+    tx: &mpsc::UnboundedSender<ChatStreamEvent>,
+) -> Result<AnthropicStreamResult> {
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    // Per-block accumulation state
+    let mut cur_block_type = String::new();
+    let mut cur_text = String::new();
+    let mut cur_thinking = String::new();
+    let mut cur_tool_id = String::new();
+    let mut cur_tool_name = String::new();
+    let mut cur_tool_json = String::new();
+
+    // Accumulated result
+    let mut content_blocks: Vec<Value> = Vec::new();
+    let mut tool_calls: Vec<AnthropicToolUse> = Vec::new();
+    let mut stop_reason = String::new();
+    let mut all_text = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("lỗi đọc SSE stream từ provider")?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim_end().to_string();
+            buffer = buffer[pos + 1..].to_string();
+
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+
+            let data = match line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:")) {
+                Some(d) => d.trim(),
+                None => continue,
+            };
+
+            if data == "[DONE]" {
+                continue;
+            }
+
+            let event: AnthropicSseEvent = match serde_json::from_str(data) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            match event.event_type.as_str() {
+                "message_start" => {
+                    // Nothing to emit — AgentThinking already sent by hub.rs
+                }
+                "content_block_start" => {
+                    if let Some(block) = &event.content_block {
+                        cur_block_type = block.block_type.clone();
+                        match cur_block_type.as_str() {
+                            "thinking" => {
+                                cur_thinking.clear();
+                                let _ = tx.send(ChatStreamEvent::ThinkingStart);
+                            }
+                            "text" => {
+                                cur_text.clear();
+                                let _ = tx.send(ChatStreamEvent::TextStart);
+                            }
+                            "tool_use" => {
+                                cur_tool_id = block.id.clone().unwrap_or_default();
+                                cur_tool_name = block.name.clone().unwrap_or_default();
+                                cur_tool_json.clear();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                "content_block_delta" => {
+                    if let Some(delta) = &event.delta {
+                        match cur_block_type.as_str() {
+                            "thinking" => {
+                                if let Some(t) = &delta.thinking {
+                                    cur_thinking.push_str(t);
+                                    let _ = tx.send(ChatStreamEvent::ThinkingDelta {
+                                        text: t.clone(),
+                                    });
+                                }
+                            }
+                            "text" => {
+                                if let Some(t) = &delta.text {
+                                    cur_text.push_str(t);
+                                    let _ = tx.send(ChatStreamEvent::TextDelta {
+                                        text: t.clone(),
+                                    });
+                                }
+                            }
+                            "tool_use" => {
+                                if let Some(pj) = &delta.partial_json {
+                                    cur_tool_json.push_str(pj);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                "content_block_stop" => {
+                    match cur_block_type.as_str() {
+                        "thinking" => {
+                            content_blocks.push(json!({
+                                "type": "thinking",
+                                "thinking": cur_thinking,
+                            }));
+                        }
+                        "text" => {
+                            all_text.push_str(&cur_text);
+                            content_blocks.push(json!({
+                                "type": "text",
+                                "text": cur_text,
+                            }));
+                            cur_text = String::new();
+                        }
+                        "tool_use" => {
+                            let input: Value = serde_json::from_str(&cur_tool_json)
+                                .unwrap_or_else(|_| json!({}));
+                            content_blocks.push(json!({
+                                "type": "tool_use",
+                                "id": cur_tool_id,
+                                "name": cur_tool_name,
+                                "input": input,
+                            }));
+                            tool_calls.push(AnthropicToolUse {
+                                id: cur_tool_id.clone(),
+                                name: cur_tool_name.clone(),
+                                input,
+                            });
+                        }
+                        _ => {}
+                    }
+                    cur_block_type.clear();
+                }
+                "message_delta" => {
+                    if let Some(delta) = &event.delta {
+                        if let Some(sr) = &delta.stop_reason {
+                            stop_reason = sr.clone();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(AnthropicStreamResult {
+        text: all_text,
+        content_blocks,
+        tool_calls,
+        stop_reason,
+    })
+}
+
 async fn send_anthropic_request(
     client: &Client,
     config: &ProviderConfig,
@@ -554,6 +841,15 @@ async fn send_provider_request_with_retry(
                     sleep(delay).await;
                     attempt += 1;
                     continue;
+                }
+
+                // Detect context limit errors on 400 Bad Request
+                if status == reqwest::StatusCode::BAD_REQUEST && detect_context_limit(body) {
+                    return Err(ContextLimitExceeded {
+                        provider: provider.to_string(),
+                        detail: body.to_string(),
+                    }
+                    .into());
                 }
 
                 bail!(error_text);
@@ -812,11 +1108,68 @@ fn extract_anthropic_content(payload: &Value) -> Option<String> {
     }
 }
 
+/// Detect context limit errors from provider error responses.
+///
+/// Handles both direct provider errors and double-wrapped errors from copilot-api proxy.
+fn detect_context_limit(body: &str) -> bool {
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    if let Some(error) = parsed.get("error") {
+        // Check for proxy double-wrapping: error.message is a JSON string containing
+        // the actual provider error (copilot-api proxy wraps upstream errors this way)
+        if let Some(message_str) = error.get("message").and_then(Value::as_str) {
+            if message_str.trim_start().starts_with('{') {
+                if let Ok(inner_parsed) = serde_json::from_str::<Value>(message_str) {
+                    if let Some(inner_error) = inner_parsed.get("error") {
+                        if is_context_limit_error(inner_error) {
+                            return true;
+                        }
+                    }
+                    if is_context_limit_error(&inner_parsed) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Check the direct error object
+        if is_context_limit_error(error) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_context_limit_error(error: &Value) -> bool {
+    // OpenAI: error.code == "context_length_exceeded"
+    if error.get("code").and_then(Value::as_str) == Some("context_length_exceeded") {
+        return true;
+    }
+
+    // Anthropic: error.type == "invalid_request_error" + message about tokens/prompt length
+    if error.get("type").and_then(Value::as_str) == Some("invalid_request_error") {
+        if let Some(message) = error.get("message").and_then(Value::as_str) {
+            let lower = message.to_ascii_lowercase();
+            if (lower.contains("tokens") && lower.contains("maximum"))
+                || lower.contains("prompt is too long")
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::ProviderConfig;
 
-    use super::{retry_delay, should_retry_status};
+    use super::{detect_context_limit, retry_delay, should_retry_status};
 
     #[test]
     fn retry_delay_grows_exponentially() {
@@ -836,5 +1189,50 @@ mod tests {
         assert!(should_retry_status(reqwest::StatusCode::BAD_GATEWAY));
         assert!(!should_retry_status(reqwest::StatusCode::BAD_REQUEST));
         assert!(!should_retry_status(reqwest::StatusCode::UNAUTHORIZED));
+    }
+
+    #[test]
+    fn detect_openai_context_limit() {
+        let body = r#"{"error":{"code":"context_length_exceeded","message":"This model maximum context length is 128000 tokens.","type":"invalid_request_error"}}"#;
+        assert!(detect_context_limit(body));
+    }
+
+    #[test]
+    fn detect_anthropic_context_limit_tokens() {
+        let body = r#"{"error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#;
+        assert!(detect_context_limit(body));
+    }
+
+    #[test]
+    fn detect_anthropic_context_limit_prompt_too_long() {
+        let body = r#"{"error":{"type":"invalid_request_error","message":"prompt is too long"}}"#;
+        assert!(detect_context_limit(body));
+    }
+
+    #[test]
+    fn detect_proxy_wrapped_context_limit() {
+        // copilot-api proxy wraps upstream errors: error.message is a JSON string
+        let inner = r#"{"error":{"type":"invalid_request_error","message":"prompt is too long"}}"#;
+        let body = format!(
+            r#"{{"error":{{"message":"{}","type":"error"}}}}"#,
+            inner.replace('"', "\\\"")
+        );
+        assert!(detect_context_limit(&body));
+    }
+
+    #[test]
+    fn non_context_400_not_detected() {
+        let body = r#"{"error":{"type":"invalid_request_error","message":"Missing required field: model"}}"#;
+        assert!(!detect_context_limit(body));
+    }
+
+    #[test]
+    fn empty_body_not_detected() {
+        assert!(!detect_context_limit(""));
+    }
+
+    #[test]
+    fn non_json_body_not_detected() {
+        assert!(!detect_context_limit("Bad Request"));
     }
 }
