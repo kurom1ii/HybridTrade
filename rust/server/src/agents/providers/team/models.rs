@@ -1,10 +1,8 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::models::ChatTurn;
+use crate::agents::models::DebugToolCall;
 
-const DEFAULT_TEAM_ROUNDS: usize = 3;
-const MAX_TEAM_ROUNDS: usize = 6;
 const MAX_TEAM_MEMBERS: usize = 6;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -14,8 +12,10 @@ pub(crate) struct SpawnTeamRequest {
     pub(crate) briefing: Option<String>,
     #[serde(default)]
     pub(crate) members: Vec<SpawnTeamMemberSpec>,
-    #[serde(default = "default_team_rounds")]
-    pub(crate) rounds: usize,
+    /// Kept for backward compat — ignored in execution (parallel blackboard pattern).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(crate) rounds: Option<usize>,
     #[serde(default)]
     pub(crate) report_instruction: Option<String>,
 }
@@ -33,9 +33,7 @@ pub(crate) struct SpawnTeamResult {
     pub(crate) ok: bool,
     pub(crate) mission: String,
     pub(crate) briefing: Option<String>,
-    pub(crate) session_id: String,
-    pub(crate) log_path: String,
-    pub(crate) exchanges_completed: usize,
+    pub(crate) duration_ms: u64,
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) members: Vec<SpawnTeamMemberView>,
@@ -57,10 +55,22 @@ pub(crate) struct SpawnTeamReport {
     pub(crate) report: String,
 }
 
+/// Entry in the shared blackboard DashMap.
 #[derive(Debug, Clone)]
-pub(crate) struct TeamRuntimeContext {
-    pub(crate) history: Vec<ChatTurn>,
-    pub(crate) context_preview: Option<String>,
+#[allow(dead_code)]
+pub(crate) struct SubagentFindings {
+    pub(crate) member: String,
+    pub(crate) responsibility: String,
+    pub(crate) content: String,
+    pub(crate) tool_calls: Vec<DebugToolCall>,
+    pub(crate) status: SubagentStatus,
+    pub(crate) completed_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SubagentStatus {
+    Completed,
+    Failed(String),
 }
 
 impl SpawnTeamRequest {
@@ -68,7 +78,6 @@ impl SpawnTeamRequest {
         self.mission = self.mission.trim().to_string();
         self.briefing = normalize_optional(self.briefing);
         self.report_instruction = normalize_optional(self.report_instruction);
-        self.rounds = self.rounds.clamp(1, MAX_TEAM_ROUNDS);
 
         if self.mission.is_empty() {
             bail!("spawn_team cần `mission`");
@@ -120,10 +129,6 @@ impl From<&SpawnTeamMemberSpec> for SpawnTeamMemberView {
     }
 }
 
-fn default_team_rounds() -> usize {
-    DEFAULT_TEAM_ROUNDS
-}
-
 fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
@@ -151,7 +156,7 @@ mod tests {
                     instructions: None,
                 },
             ],
-            rounds: 2,
+            rounds: Some(2),
             report_instruction: None,
         };
 
@@ -168,14 +173,13 @@ mod tests {
                 responsibility: "  calendar  ".to_string(),
                 instructions: Some("  focus on forecasts  ".to_string()),
             }],
-            rounds: 0,
+            rounds: None,
             report_instruction: Some("  concise  ".to_string()),
         }
         .validate()
         .unwrap();
 
         assert_eq!(request.mission, "assess eurusd");
-        assert_eq!(request.rounds, 1);
         assert!(request.briefing.is_none());
         assert_eq!(request.members[0].name, "Macro");
         assert_eq!(request.members[0].responsibility, "calendar");

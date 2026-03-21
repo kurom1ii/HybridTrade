@@ -31,16 +31,8 @@ pub enum ChatStreamEvent {
         mission: String,
         members: Vec<String>,
     },
-    TeamRound {
-        round: usize,
-        total: usize,
-        phase: String,
-    },
-    TeamDirective {
-        session_id: String,
-        seq: usize,
-        to: String,
-        content_preview: String,
+    TeamMemberStarted {
+        member: String,
     },
     TeamToolCall {
         member: String,

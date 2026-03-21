@@ -652,7 +652,6 @@ impl ProviderHub {
             provider,
             config,
             api_key,
-            turn_skills.active_skills.clone(),
             stream_tx.clone(),
         ));
 
@@ -910,7 +909,6 @@ impl ProviderHub {
         provider: ProviderKind,
         config: &ProviderConfig,
         api_key: Option<&str>,
-        active_skills: Vec<super::capabilities::ActiveSkill>,
         stream_tx: Option<mpsc::UnboundedSender<ChatStreamEvent>>,
     ) -> TeamOrchestrator {
         TeamOrchestrator::new(
@@ -919,7 +917,6 @@ impl ProviderHub {
             provider,
             config.clone(),
             api_key.map(str::to_string),
-            active_skills,
             stream_tx,
         )
     }

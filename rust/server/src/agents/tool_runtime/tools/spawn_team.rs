@@ -1,11 +1,11 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
-use crate::agents::providers::team::{SpawnTeamRequest, TeamRuntimeContext};
+use crate::agents::providers::team::SpawnTeamRequest;
 use crate::agents::tool_runtime::runtime::ToolRuntime;
 
 pub(crate) const DESCRIPTION: &str =
-    "Spawn một team subagent runtime-only, cho họ trao đổi qua transcript chung rồi trả báo cáo về cho Kuromi.";
+    "Spawn subagent chạy song song và độc lập, mỗi agent hoàn thành trách nhiệm riêng, kết quả tổng hợp vào blackboard chung rồi trả báo cáo về cho Kuromi.";
 
 pub(crate) fn schema() -> Value {
     json!({
@@ -18,12 +18,6 @@ pub(crate) fn schema() -> Value {
             "briefing": {
                 "type": "string",
                 "description": "Bổ sung ngắn từ Kuromi để các subagent bám vào"
-            },
-            "rounds": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 4,
-                "description": "Số vòng thảo luận cho team, mặc định 2"
             },
             "report_instruction": {
                 "type": "string",
@@ -66,13 +60,7 @@ pub(crate) async fn execute(runtime: &ToolRuntime, arguments: Value) -> Result<V
     };
 
     let output = team_orchestrator
-        .execute(
-            request,
-            TeamRuntimeContext {
-                history: runtime.history.clone(),
-                context_preview: runtime.context_preview.clone(),
-            },
-        )
+        .execute(request, runtime.context_preview.clone())
         .await?;
 
     serde_json::to_value(output).context("không thể serialize kết quả spawn_team")
